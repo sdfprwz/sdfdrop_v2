@@ -258,29 +258,6 @@
 
 <script src="vendor/qrcode.min.js" defer></script>
 <script src="app.js"></script>
-<script>
-(() => {
-  const landing = document.getElementById('landing');
-  const app = document.getElementById('appView');
-  const openButtons = document.querySelectorAll('[data-open-app]');
-  function showApp() {
-    landing.classList.add('hidden');
-    app.classList.remove('hidden');
-    document.body.classList.add('app-mode');
-    history.replaceState(null, '', '#app');
-    window.scrollTo(0, 0);
-  }
-  function showLanding() {
-    app.classList.add('hidden');
-    landing.classList.remove('hidden');
-    document.body.classList.remove('app-mode');
-  }
-  openButtons.forEach(btn => btn.addEventListener('click', showApp));
-  if (location.hash === '#app') showApp();
-  window.addEventListener('hashchange', () => {
-    if (location.hash !== '#app') showLanding();
-  });
-})();
-</script>
+<script src="landing.js"></script>
 </body>
 </html>
