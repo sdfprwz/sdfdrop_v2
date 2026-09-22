@@ -1,5 +1,5 @@
 /* sdfdrop service worker — network-first navigations, cache-first assets */
-const CACHE = 'sdfdrop-v4';
+const CACHE = 'sdfdrop-v5';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './landing.js', './vendor/qrcode.min.js', './manifest.webmanifest', './logo-mark.png', './icon-192.png', './icon-512.png', './favicon-48.png', './favicon-32.png', './hero-illustration.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -9,6 +9,11 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) return;
+  // Never cache API / SEO / realtime paths — always go to network (Googlebot + app correctness).
+  const u = new URL(e.request.url);
+  if (u.pathname === '/health' || u.pathname === '/config' || u.pathname === '/stats' ||
+      u.pathname === '/debug' || u.pathname === '/ws' ||
+      u.pathname === '/robots.txt' || u.pathname === '/sitemap.xml') return;
   // Navigations go to the network first so deploys never serve a stale shell.
   if (e.request.mode === 'navigate') {
     e.respondWith(

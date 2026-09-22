@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://sdpdrop-v2.onrender.com/sitemap.xml
