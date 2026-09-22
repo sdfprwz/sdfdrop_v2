@@ -100,7 +100,7 @@
     } catch { /* ignore */ }
     // GitHub Pages default → point at Render backend (change to your URL)
     if(location.hostname.endsWith('github.io')){
-      return 'wss://sdfdrop.onrender.com/ws';
+      return 'wss://sdfdrop2.onrender.com/ws';
     }
     const proto=location.protocol==='https:'?'wss:':'ws:';
     if(location.protocol.startsWith('http')) return `${proto}//${location.host}/ws`;

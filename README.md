@@ -40,7 +40,7 @@ Quick test: open two tabs → click a peer → send a file → Accept. Room test
    - Free tier sleeps when idle — first load after sleep takes ~30s, then it reconnects by itself.
 
 3. **(Optional) GitHub Pages frontend → Render backend**
-   - The frontend auto-detects `github.io` and uses `wss://sdfdrop.onrender.com/ws` — change that URL in `public/app.js` (`getWsUrl()`) to your Render URL, or set `window.SDFDROP_WS_URL` at deploy time.
+   - The frontend auto-detects `github.io` and uses `wss://sdfdrop2.onrender.com/ws` — change that URL in `public/app.js` (`getWsUrl()`) to your Render URL, or set `window.SDFDROP_WS_URL` at deploy time.
    - Deploy `/public` to Pages; keep Render running for signaling.
 
 ## How it works
