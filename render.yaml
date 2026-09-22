@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: sdfdrop
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      # Only these browser origins may open a cross-origin WebSocket.
+      # Same-origin (your Render domain, LAN IP, localhost) always works.
+      # Example for a GitHub Pages frontend: "https://<you>.github.io"
+      - key: ALLOWED_ORIGINS
+        value: ""
+      # Optional: gate detailed /stats?token=... (peer/room counts).
+      # Generate one with: node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+      - key: ADMIN_TOKEN
+        value: ""
+      # Abuse guards (sane defaults for small instances)
+      - key: MAX_CONN_PER_IP
+        value: "5"
+      - key: MSG_MAX_PER_WINDOW
+        value: "60"
+      # Optional: your own TURN (recommended for production relay quality)
+      # - key: TURN_URLS
+      #   value: turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443
+      # - key: TURN_USER
+      #   value: openrelay
+      # - key: TURN_PASS
+      #   value: openrelay

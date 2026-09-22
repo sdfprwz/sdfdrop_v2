@@ -1,0 +1,15 @@
+{
+  "name": "SdfDrop",
+  "short_name": "SdfDrop",
+  "description": "SdfDrop — fast, private peer-to-peer file sharing.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07111f",
+  "theme_color": "#0d7cff",
+  "icons": [
+    {"src":"icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
