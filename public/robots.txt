@@ -1,3 +1,4 @@
 User-agent: *
 Allow: /
+Disallow:
 Sitemap: https://sdfdrop2.onrender.com/sitemap.xml
