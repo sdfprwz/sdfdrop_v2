@@ -78,6 +78,7 @@ app.get('/config', (_req, res) => {
     wsPath: '/ws',
     iceServers: iceServers(),
     maxRelayChunk: 64 * 1024,
+    relayMaxBytes: RELAY_MAX_BYTES,
   });
 });
 app.get('/stats', (req, res) => {
@@ -102,7 +103,9 @@ app.get('/debug', (req, res) => {
   res.json({
     ipHash: shortHash(ip),
     keys: localKeysFor(rawIpSafe(raw)).map(k => ({ key: k, hash: shortHash(k) })),
-    hint: 'Compare "hashes" on both devices. Same WiFi must share at least one key hash. If not, use a Room code.',
+    hint: 'Compare "hashes" on both devices. Same WiFi must share at least one key hash. If not, the app also matches a private-LAN hint (see lanHint) or just use a Room code.',
+    lanHint: 'If ?lan=192.168.1.0/24 is passed, its hash is shown so you can compare the WebRTC-derived subnet on both devices.',
+    lanHash: typeof req.query.lan === 'string' && lanKeyFor(req.query.lan) ? shortHash(lanKeyFor(req.query.lan)) : null,
     trustProxy: true,
   });
   function rawIpSafe(v) { return v; }
@@ -115,7 +118,7 @@ app.get('*', (req, res, next) => {
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 512 * 1024 });
 
 // peerId -> { ws, id, name, avatar, color, ip, localKeys, rooms:Set, ua, connectedAt, clientId, alive, msgStamps }
 const peers = new Map();
@@ -127,7 +130,10 @@ const MAX_CONN_PER_IP = parseInt(process.env.MAX_CONN_PER_IP || '5', 10);
 const MSG_WINDOW_MS = 10_000;
 const MSG_MAX_PER_WINDOW = parseInt(process.env.MSG_MAX_PER_WINDOW || '60', 10);
 const MAX_ROOMS_PER_PEER = 3;
-const RELAY_MAX_BYTES = 100 * 1024 * 1024; // WS-relay cap per file; WebRTC P2P path unaffected
+// WS-relay cap per file (default 2GB = effectively unlimited for browser
+// transfers; the relay streams chunk-by-chunk without storing the file).
+// WebRTC P2P path was never capped. Override with RELAY_MAX_BYTES env.
+const RELAY_MAX_BYTES = parseInt(process.env.RELAY_MAX_BYTES || String(2 * 1024 * 1024 * 1024), 10);
 const TEXT_MAX_LEN = 8192;
 const SIGNAL_MAX_JSON = 20 * 1024;
 const RELAY_CHUNK_MAX = 100 * 1024; // base64 chars per chunk message
@@ -228,6 +234,23 @@ function shortHash(s) {
   return h.toString(36);
 }
 
+// Client-reported private-LAN hint (e.g. "192.168.1.0/24") obtained from
+// WebRTC host ICE candidates. This fixes same-WiFi discovery when the two
+// devices exit via different public IPs (IPv4-vs-IPv6, CGNAT pools, iCloud
+// Private Relay, VPN on one side). Strictly validated: private ranges only,
+// so it can never widen visibility beyond a LAN the device is actually on.
+function lanKeyFor(hint) {
+  if (typeof hint !== 'string') return null;
+  const h = hint.trim().toLowerCase();
+  let m = h.match(/^(10\.\d+\.\d+\.0\/24|192\.168\.\d+\.0\/24|172\.(1[6-9]|2\d|3[01])\.\d+\.0\/24)$/);
+  if (m) return 'local:lan4:' + m[1];
+  m = h.match(/^([0-9a-f]{1,4}(?::[0-9a-f]{0,4}){0,3})\/64$/);
+  if (m && (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80'))) {
+    return 'local:lan6:' + h;
+  }
+  return null;
+}
+
 // A device gets MULTIPLE grouping keys so same-WiFi matches even with
 // IPv4-vs-IPv6 differences, private LANs, and Render proxy quirks.
 function localKeysFor(rawIp) {
@@ -252,8 +275,15 @@ function localKeysFor(rawIp) {
 }
 
 function isSameNetwork(a, b) {
-  if (!a?.localKeys || !b?.localKeys) return false;
-  for (const k of a.localKeys) if (b.localKeys.has(k)) return true;
+  if (!a || !b) return false;
+  if (a.localKeys && b.localKeys) {
+    for (const k of a.localKeys) if (b.localKeys.has(k)) return true;
+  }
+  // Private-LAN hint match (WebRTC host candidates): same WiFi even when
+  // public exit IPs differ. Both sides must report the identical subnet.
+  if (a.lanKeys && b.lanKeys && a.lanKeys.size && b.lanKeys.size) {
+    for (const k of a.lanKeys) if (b.lanKeys.has(k)) return true;
+  }
   // Self-host bridge: a localhost tab IS the host machine, so it shares the
   // LAN with private-network devices connecting to it (e.g. PC on
   // http://localhost:3000 + phone on http://192.168.1.10:3000).
@@ -316,7 +346,8 @@ function visiblePeersFor(peerId) {
   return out;
 }
 
-// Notify everyone whose view may have changed: same network + members of given rooms
+// Notify everyone whose view may have changed: same network (incl. LAN hint)
+// + members of given rooms
 function broadcastPeerLists(changedPeerId) {
   const changed = peers.get(changedPeerId);
   if (!changed) return;
@@ -392,6 +423,7 @@ wss.on('connection', (ws, req) => {
 
   const peer = {
     ws, id, ip, localKeys,
+    lanKeys: new Set(),
     name: 'Anonymous',
     avatar: '📦',
     color: '#6366f1',
@@ -444,6 +476,18 @@ wss.on('connection', (ws, req) => {
         if (typeof msg.avatar === 'string' && msg.avatar) peer.avatar = [...msg.avatar].slice(0, 4).join('');
         if (typeof msg.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(msg.color)) peer.color = msg.color;
         if (typeof msg.clientId === 'string') peer.clientId = msg.clientId.slice(0, 64);
+        // Private-LAN subnet hint from WebRTC host candidates (same-WiFi
+        // matching when public IPs differ). Re-sent periodically by client.
+        if (typeof msg.lanSubnet === 'string') {
+          const lk = lanKeyFor(msg.lanSubnet);
+          if (lk) {
+            const before = peer.lanKeys.has(lk) ? peer.lanKeys.size : -1;
+            peer.lanKeys = new Set([lk]);
+            if (before !== 1) {
+              setTimeout(() => broadcastPeerLists(id), 10);
+            }
+          }
+        }
         if (typeof msg.room === 'string' && /^[A-Z0-9]{4,12}$/i.test(msg.room.trim())) {
           if (peer.rooms.size >= MAX_ROOMS_PER_PEER && !peer.rooms.has(msg.room.trim().toUpperCase())) {
             send(ws, { type: 'error', message: 'Room limit reached.' });
@@ -508,7 +552,7 @@ wss.on('connection', (ws, req) => {
         } else if (d.kind === 'file-header') {
           if (typeof d.name !== 'string' || d.name.length === 0 || d.name.length > 255 ||
               typeof d.size !== 'number' || !(d.size >= 0) || d.size > RELAY_MAX_BYTES) {
-            send(ws, { type: 'error', message: 'File too large for relay (100MB max)' }); break;
+            send(ws, { type: 'error', message: 'File too large for relay' }); break;
           }
         } else if (d.kind === 'file-chunk') {
           if (typeof d.chunk !== 'string' || d.chunk.length === 0 || d.chunk.length > RELAY_CHUNK_MAX) {
@@ -573,7 +617,7 @@ wss.on('connection', (ws, req) => {
         } else if (d.kind === 'file-header') {
           if (typeof d.name !== 'string' || d.name.length === 0 || d.name.length > 255 ||
               typeof d.size !== 'number' || !(d.size >= 0) || d.size > RELAY_MAX_BYTES) {
-            send(ws, { type: 'error', message: 'File too large for broadcast (100MB max)' }); break;
+            send(ws, { type: 'error', message: 'File too large for broadcast' }); break;
           }
         } else if (d.kind === 'file-chunk') {
           if (typeof d.chunk !== 'string' || d.chunk.length === 0 || d.chunk.length > RELAY_CHUNK_MAX) {
@@ -630,6 +674,13 @@ wss.on('connection', (ws, req) => {
         send(ws, { type: 'pong' });
         break;
       }
+      case 'rescan': {
+        // Client asked for a fresh radar: reply directly + poke same-net
+        // peers so both sides converge even if a broadcast was missed.
+        send(ws, { type: 'peers', peers: visiblePeersFor(id), you: { id } });
+        broadcastPeerLists(id);
+        break;
+      }
       default:
         break;
     }
@@ -649,6 +700,11 @@ wss.on('connection', (ws, req) => {
       let should = false;
       for (const k of peer.localKeys) {
         if (p.localKeys.has(k)) { should = true; break; }
+      }
+      if (!should && peer.lanKeys && p.lanKeys) {
+        for (const k of peer.lanKeys) {
+          if (p.lanKeys.has(k)) { should = true; break; }
+        }
       }
       if (!should) {
         for (const r of leftRooms) {

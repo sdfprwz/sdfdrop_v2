@@ -37,7 +37,11 @@
   const pendingAccept=new Map(); // transferId -> {resolve,reject} (1-to-1)
   const broadcastWaits=new Map(); // transferId -> {accepted:Set, onAccept, room} (1-to-room)
   const incoming=new Map(); // transferId -> {meta, chunks, received, from, mode, el...}
-  const CHUNK=16*1024;
+  const CHUNK=64*1024; // 64KB DataChannel messages: 4x fewer round-trips than
+  // 16KB with the same per-message overhead; universally supported (Chrome /
+  // Firefox / Safari SCTP all handle 64KB). Larger (256KB) breaks older FF.
+  const RELAY_BIN_STEP=71*1024; // → ~97KB base64, just under the 100KB server chunk cap
+  let RELAY_MAX_BYTES = 2*1024*1024*1024; // server /config relayMaxBytes overrides
 
   // ---------- ui refs ----------
   const statusPill=$('#statusPill'), statusText=$('#statusText'), peersLayer=$('#peersLayer'),
@@ -111,10 +115,38 @@
     try{
       const base=getWsUrl().replace(/\/ws$/,'').replace(/^ws/,'http');
       if(base.startsWith('http')){
-        const r=await fetch(base+'/config');if(r.ok){const j=await r.json();if(j.iceServers?.length)iceServers=j.iceServers;}
+        const r=await fetch(base+'/config');if(r.ok){const j=await r.json();if(j.iceServers?.length)iceServers=j.iceServers;if(Number.isFinite(j.relayMaxBytes)&&j.relayMaxBytes>0)RELAY_MAX_BYTES=j.relayMaxBytes;}
       }
     }catch{/* keep defaults */}
   }
+
+  // ---------- private-LAN hint (same-WiFi matching when public IPs differ) ----------
+  // Derives e.g. "192.168.1.0/24" from WebRTC host ICE candidates and reports
+  // it in hello/update. Server matches identical subnets. Cached: candidates
+  // don't change unless the network does.
+  let lanSubnet='', lanDetectDone=false;
+  function detectLanSubnet(){
+    if(lanDetectDone)return Promise.resolve(lanSubnet);
+    lanDetectDone=true;
+    return new Promise((resolve)=>{
+      let done=false;
+      const finish=(v)=>{if(!done){done=true;lanSubnet=v||'';try{if(lanSubnet)hello();}catch{}resolve(lanSubnet);}};
+      try{
+        const pc=new RTCPeerConnection({iceServers:[]});
+        pc.createDataChannel('lan');
+        const seen={};
+        pc.onicecandidate=(e)=>{
+          if(!e.candidate){finish(mostCommon(seen));try{pc.close()}catch{}return;}
+          const m=/candidate:\d+ \d+ udp \d+ (10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)/.exec(e.candidate.candidate||'');
+          if(m){const p=m[1].split('.');seen[`${p[0]}.${p[1]}.${p[2]}.0/24`]=(seen[`${p[0]}.${p[1]}.${p[2]}.0/24`]||0)+1;}
+        };
+        pc.createOffer().then(o=>pc.setLocalDescription(o)).catch(()=>finish(''));
+        setTimeout(()=>{finish(mostCommon(seen));try{pc.close()}catch{};},2500);
+        function mostCommon(o){let b='',n=0;for(const k in o){if(o[k]>n){n=o[k];b=k;}}return b;}
+      }catch{finish('');}
+    });
+  }
+  setTimeout(()=>{try{detectLanSubnet();}catch{}},1500);
 
   // ---------- websocket (hardened: watchdog + clean reconnect + room rejoin) ----------
   function clearPeerConnections(){
@@ -167,7 +199,14 @@
   }
   function scheduleReconnect(){if(connectTimer)clearTimeout(connectTimer);connectTimer=setTimeout(connect,retryMs);retryMs=Math.min(retryMs*1.6,15000);}
   function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o));}
-  function hello(){send({type:'hello',name:myName,avatar:myAvatar,color:myColor,clientId,room:myRoom||undefined});}
+  function hello(){send({type:'hello',name:myName,avatar:myAvatar,color:myColor,clientId,room:myRoom||undefined,lanSubnet:lanSubnet||undefined});}
+  // Keep presence fresh + heal missed broadcasts: re-hello every 25s and an
+  // explicit rescan (own reply + server pokes same-network peers).
+  setInterval(()=>{if(ws&&ws.readyState===1)hello();},25000);
+  function rescan(){if(ws&&ws.readyState===1){hello();send({type:'rescan'});}else{connect();}}
+  const _btnRescan=$('#btnRescan');if(_btnRescan)_btnRescan.onclick=()=>{rescan();toast('Scanning for nearby devices…','info');};
+  // If radar is empty, nudge the server periodically (missed broadcast heal).
+  setInterval(()=>{if(ws&&ws.readyState===1&&peers.length===0)send({type:'rescan'});},15000);
   // Refresh presence when tab comes back (mobile browsers freeze WS in background)
   document.addEventListener('visibilitychange',()=>{
     if(!document.hidden){
@@ -360,7 +399,7 @@
     for(const f of files)await sendOneRoomFile(room,f);
   }
   async function sendOneRoomFile(room, file){
-    if(file.size>RELAY_MAX_BYTES){toast('File too big for broadcast (100MB max)','err');return;}
+    if(file.size>RELAY_MAX_BYTES){toast('File too big','err');return;}
     const id=uid(6);
     const n=roomPeerCount();
     const ui=addTransfer({id,name:file.name,size:file.size,peerName:`Room ${room} (${n})`,dir:'up',mode:'room'});
@@ -381,13 +420,13 @@
       if(bw.started||ui.cancelled)return;bw.started=true;
       sendBtn.remove();clearTimeout(timer);
       stEl.textContent=`Room ${room} • broadcasting to ${bw.accepted.size} accepted…`;
-      const STEP_BIN=45*1024;let seq=0; // ~60KB base64 per message
-      for(let off=0;off<file.size;off+=STEP_BIN){
+      let seq=0; // RELAY_BIN_STEP → just under the server chunk cap
+      for(let off=0;off<file.size;off+=RELAY_BIN_STEP){
         if(ui.cancelled){sendCancel();return;}
-        const buf=await file.slice(off,off+STEP_BIN).arrayBuffer();
-        send({type:'broadcast',room,data:{kind:'file-chunk',id,seq:seq++,chunk:b64encode(buf),last:off+STEP_BIN>=file.size}});
-        ui.update(Math.min(file.size,off+STEP_BIN));
-        while(ws&&ws.bufferedAmount>512*1024){await new Promise(r=>setTimeout(r,50));}
+        const buf=await file.slice(off,off+RELAY_BIN_STEP).arrayBuffer();
+        send({type:'broadcast',room,data:{kind:'file-chunk',id,seq:seq++,chunk:b64encode(buf),last:off+RELAY_BIN_STEP>=file.size}});
+        ui.update(Math.min(file.size,off+RELAY_BIN_STEP));
+        while(ws&&ws.bufferedAmount>1024*1024){await new Promise(r=>setTimeout(r,20));}
       }
       send({type:'broadcast',room,data:{kind:'file-done',id}});
       ui.done(null);broadcastWaits.delete(id);
@@ -517,7 +556,6 @@
   }
 
   // ---------- transfers UI ----------
-  const RELAY_MAX_BYTES = 100*1024*1024; // must match server RELAY_MAX_BYTES
   const blobUrls=[]; // revoke oldest so long sessions don't leak Blob memory
   function trackBlobUrl(url){
     blobUrls.push(url);
@@ -582,17 +620,29 @@
     try{await accepted;}catch{ui.fail('declined');pendingAccept.delete(id);return;}
     pendingAccept.delete(id);
     if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}
+    // Stream 64KB messages with backpressure: only pause when >2MB is still
+    // queued, and wake on bufferedamountlow (no fixed per-chunk sleep).
+    dc.bufferedAmountLowThreshold=512*1024;
     let offset=0;
     while(offset<file.size){
       if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}
+      if(dc.bufferedAmount>2*1024*1024){await waitForBuffer(dc);if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}}
       const slice=file.slice(offset,offset+CHUNK);
       const buf=await slice.arrayBuffer();
-      while(dc.bufferedAmount>1024*1024){await new Promise(r=>{dc.onbufferedamountlow=()=>r();setTimeout(r,200);});}
       if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}
-      dc.send(buf);offset+=buf.byteLength;ui.update(offset);
+      try{dc.send(buf);}catch{await sendFileRelay(peer,file,id,ui);return;}
+      offset+=buf.byteLength;ui.update(offset);
     }
     dc.send(JSON.stringify({kind:'file-done',id}));
     ui.done(null);toast(`Sent ${file.name} → ${peer.name} ✓`,'ok');
+  }
+  function waitForBuffer(dc){
+    return new Promise((res)=>{
+      let done=false;
+      const finish=()=>{if(!done){done=true;try{dc.onbufferedamountlow=null;}catch{}res();}};
+      try{dc.onbufferedamountlow=()=>finish();}catch{return finish();}
+      setTimeout(finish,250);
+    });
   }
   async function sendTextTo(peer,text){
     const id=uid(6);
@@ -614,7 +664,7 @@
   // socket backpressure instead of a fixed per-chunk sleep, so throughput
   // is limited by the network, not by an artificial delay.
   async function sendFileRelay(peer,file,id,ui){
-    if(file.size>RELAY_MAX_BYTES){ui.fail('too big for relay (100MB max — use same-WiFi P2P)');toast('File too big for relay (100MB max)','err');return;}
+    if(file.size>RELAY_MAX_BYTES){ui.fail('too big for relay — try same-WiFi P2P or a room resend');toast('File too big for relay','err');return;}
     const header={kind:'file-header',id,name:file.name,size:file.size,mime:file.type||'application/octet-stream'};
     send({type:'relay',to:peer.id,data:header});
     toast(`P2P unavailable — relaying via server 🌐`,'info');
@@ -622,13 +672,13 @@
     try{await accepted;}catch{ui.fail('declined');pendingAccept.delete(id);return;}
     pendingAccept.delete(id);
     if(ui.cancelled){sendTransferCancel(peer.id,id,'relay');return;}
-    const STEP_BIN=45*1024;let seq=0; // → ~60KB base64, under the 100KB chunk cap
-    for(let off=0;off<file.size;off+=STEP_BIN){
+    let seq=0; // RELAY_BIN_STEP → just under the server chunk cap
+    for(let off=0;off<file.size;off+=RELAY_BIN_STEP){
       if(ui.cancelled){sendTransferCancel(peer.id,id,'relay');return;}
-      const buf=await file.slice(off,off+STEP_BIN).arrayBuffer();
-      send({type:'relay',to:peer.id,data:{kind:'file-chunk',id,seq:seq++,chunk:b64encode(buf),last:off+STEP_BIN>=file.size}});
-      ui.update(Math.min(file.size,off+STEP_BIN));
-      while(ws&&ws.bufferedAmount>512*1024){await new Promise(r=>setTimeout(r,50));}
+      const buf=await file.slice(off,off+RELAY_BIN_STEP).arrayBuffer();
+      send({type:'relay',to:peer.id,data:{kind:'file-chunk',id,seq:seq++,chunk:b64encode(buf),last:off+RELAY_BIN_STEP>=file.size}});
+      ui.update(Math.min(file.size,off+RELAY_BIN_STEP));
+      while(ws&&ws.bufferedAmount>1024*1024){await new Promise(r=>setTimeout(r,20));}
     }
     send({type:'relay',to:peer.id,data:{kind:'file-done',id}});
     ui.done(null);
@@ -643,7 +693,8 @@
     // Room broadcasts arrive as server fan-out: same handling as relay, room-tagged.
     const tmode=pkt.room?'room':mode;
     if(pkt.kind==='file-header'){
-      incoming.set(pkt.id,{meta:pkt,chunks:[],b64:'',received:0,nextSeq:0,from:fromId,fromName:peer.name,mode:tmode,room:pkt.room||null,ui:null,accepted:false});
+      if(typeof pkt.size!=='number'||!(pkt.size>=0)||(tmode!=='p2p'&&pkt.size>RELAY_MAX_BYTES)){failIncoming(pkt.id,'file too large');return;}
+      incoming.set(pkt.id,{meta:pkt,chunks:[],received:0,nextSeq:0,from:fromId,fromName:peer.name,mode:tmode,room:pkt.room||null,ui:null,accepted:false});
       recvQueue.push(pkt.id);renderRecvModal();
       // Expire stale unaccepted transfers so dead senders can't leak memory
       setTimeout(()=>{
@@ -660,9 +711,12 @@
       const inc=incoming.get(pkt.id);if(!inc)return;
       if(inc.mode==='p2p')return;
       if(typeof pkt.chunk!=='string'||(pkt.seq!==undefined&&pkt.seq!==inc.nextSeq))return failIncoming(pkt.id,'invalid chunk sequence');
-      const binLen=Math.max(0,Math.floor(pkt.chunk.length*3/4)-(pkt.chunk.endsWith('==')?2:pkt.chunk.endsWith('=')?1:0));
-      if(!binLen||inc.received+binLen>inc.meta.size)return failIncoming(pkt.id,'invalid transfer size');
-      inc.b64+=pkt.chunk;inc.received+=binLen;inc.nextSeq++;
+      // Decode immediately and store binary parts: concatenating one giant
+      // base64 string is O(n²) and freezes/OOMs on large files.
+      let part;
+      try{part=b64ToBytes(pkt.chunk);}catch{return failIncoming(pkt.id,'invalid chunk');}
+      if(!part.length||inc.received+part.length>inc.meta.size)return failIncoming(pkt.id,'invalid transfer size');
+      inc.chunks.push(part);inc.received+=part.length;inc.nextSeq++;
       if(inc.ui)inc.ui.update(inc.received);
     }
     else if(pkt.kind==='file-done'){finishIncoming(pkt.id);}
@@ -761,9 +815,8 @@
     const inc=incoming.get(id);if(!inc||inc.done)return;
     if(inc.received!==inc.meta.size){failIncoming(id,'incomplete transfer');return;}
     inc.done=true;
-    let blob;
-    if(inc.b64){blob=new Blob([b64ToBytes(inc.b64)],{type:inc.meta.mime});}
-    else {blob=new Blob(inc.chunks,{type:inc.meta.mime});}
+    const blob=new Blob(inc.chunks,{type:inc.meta.mime});
+    inc.chunks.length=0; // allow GC of parts once Blob takes over
     const url=URL.createObjectURL(blob);
     trackBlobUrl(url);
     if(inc.ui)inc.ui.done({url,name:inc.meta.name},'Save file');

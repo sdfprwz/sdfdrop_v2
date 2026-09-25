@@ -6,7 +6,7 @@ Fast browser-to-browser file + text sharing. Best of **Snapdrop** (zero-setup), 
 - 🌐 **Different networks:** join the same **Room code** (e.g. `CLASS1`) or open the shared link → connects via WebRTC + TURN, with WebSocket relay fallback.
 - 📢 **Room broadcast (classroom):** a teacher taps **Send to room** — one upload fans out to everyone in that room only. Live accept-count, auto-send, resend for stragglers, 📢 announcements.
 - 🔒 **Private:** P2P first (DTLS encrypted), TURN/relay fallback. Server only signals — files are never stored. No database, no accounts.
-- ⚡ **Fast:** 16KB DataChannel chunks with backpressure, progress + speed, screen WakeLock for big transfers.
+- ⚡ **Fast:** 64KB DataChannel chunks with proper backpressure, larger relay chunks, streaming receive (no base64 concat), progress + speed, screen WakeLock for big transfers.
 - 📱 **PWA:** installable, dark/light themes, responsive phone → desktop UI.
 
 ## Run locally
@@ -55,7 +55,7 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
                     ↳ 📢 Room broadcast? → one upload, server fans out to room
 ```
 
-- **Discovery:** same WiFi = shared network keys (exact public IPv4 + IPv6 `/64` prefix + private `/24`; `localhost` bridged with private LAN). Plus custom rooms (cap 100 members). Open `/debug` on both devices — matching key hashes means auto-discovery will work.
+- **Discovery:** same WiFi = shared network keys (exact public IPv4 + IPv6 `/64` prefix + private `/24`) **plus a client-reported private-LAN hint** (WebRTC host candidates, e.g. `192.168.1.0/24`) so phones/laptops match even when their public exit IPs differ (IPv4-vs-IPv6, CGNAT pools, Private Relay). `localhost` bridged with private LAN. Plus custom rooms (cap 100 members), presence re-announce every 25s, ↻ Rescan button, and auto-rescan while the radar is empty. Open `/debug` on both devices — matching key hashes means auto-discovery will work.
 - **STUN/TURN:** Google STUN + OpenRelay TURN by default. Bring your own via env: `TURN_URLS`, `TURN_USER`, `TURN_PASS` (see `render.yaml`).
 - **Endpoints:** `/health` · `/config` · `/stats` (gated) · `/debug` · WebSocket at `/ws`.
 
@@ -70,10 +70,10 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 
 - **Trust:** encryption is end-to-end only if you trust the signaling server (a malicious server could swap SDP offers). Self-host; don't trade sensitive files over random public instances.
 - **WebSocket origin policy:** same-origin always allowed (Render domain, LAN IP, localhost). Cross-origin only via `ALLOWED_ORIGINS` (e.g. your `https://<you>.github.io`). No `?ws=` override.
-- **Anti-abuse caps (env-tunable):** `MAX_CONN_PER_IP` (5), `MSG_MAX_PER_WINDOW` (60/10s), 3 rooms/peer, relay/broadcast file cap 100MB, text 8KB, chunks ≤100KB, signals ≤20KB, header-before-chunks sessions.
+- **Anti-abuse caps (env-tunable):** `MAX_CONN_PER_IP` (5), `MSG_MAX_PER_WINDOW` (60/10s), 3 rooms/peer, relay/broadcast file cap 2GB default (`RELAY_MAX_BYTES`, effectively no limit — raise/lower via env), text 8KB, chunks ≤100KB, signals ≤20KB, header-before-chunks sessions.
 - **Headers:** `nosniff`, `SAMEORIGIN` framing, minimal CSP, HSTS on https, no `X-Powered-By`. No third-party scripts (QR generator vendored in `public/vendor/` — scannable canvas QR, no CDN).
 - **Detailed `/stats`** gated to localhost/direct-LAN or `?token=ADMIN_TOKEN`. `/debug` returns hashes only.
-- **Large files:** relay >100MB refused (use same-WiFi P2P); transfers have ✕ Cancel; Blob URLs capped/revoked; stale transfers expire after 5 min.
+- **Large files:** no fixed 100MB cap (relay/broadcast default 2GB, P2P unlimited); transfers have ✕ Cancel; Blob URLs capped/revoked; stale transfers expire after 5 min.
 - **PWA:** `sdfdrop-v2` cache, network-first navigations so updates apply.
 
 ## Troubleshooting

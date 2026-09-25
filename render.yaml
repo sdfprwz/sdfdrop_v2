@@ -23,6 +23,10 @@ services:
         value: "5"
       - key: MSG_MAX_PER_WINDOW
         value: "60"
+      # Relay/broadcast cap per file in bytes (default 2GB = effectively no
+      # limit; relay streams without storing). Lower it to bound egress abuse.
+      - key: RELAY_MAX_BYTES
+        value: "2147483648"
       # Optional: your own TURN (recommended for production relay quality)
       # - key: TURN_URLS
       #   value: turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443
