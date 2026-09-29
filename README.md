@@ -1,13 +1,13 @@
-# sdfdrop 💧 — drop it. share it.
+# sdfdrop — drop it. share it.
 
 Fast browser-to-browser file + text sharing. Best of **Snapdrop** (zero-setup), **PairDrop** (rooms + relay), **AirDrop** (feel) — under your **sdfdrop** branding.
 
-- 📶 **Same WiFi:** open sdfdrop on 2 devices → they appear on each other's radar instantly. No code, no signup.
-- 🌐 **Different networks:** join the same **Room code** (e.g. `CLASS1`) or open the shared link → connects via WebRTC + TURN, with WebSocket relay fallback.
-- 📢 **Room broadcast (classroom):** a teacher taps **Send to room** — one upload fans out to everyone in that room only. Live accept-count, auto-send, resend for stragglers, 📢 announcements.
-- 🔒 **Private:** P2P first (DTLS encrypted), TURN/relay fallback. Server only signals — files are never stored. No database, no accounts.
-- ⚡ **Fast:** 64KB DataChannel chunks with proper backpressure, larger relay chunks, streaming receive (no base64 concat), progress + speed, screen WakeLock for big transfers.
-- 📱 **PWA:** installable, dark/light themes, responsive phone → desktop UI.
+- **Same WiFi:** open sdfdrop on 2 devices → they appear on each other's radar instantly. No code, no signup.
+- **Different networks:** join the same **Room code** (e.g. `CLASS1`) or open the shared link → connects via WebRTC + TURN, with WebSocket relay fallback.
+- **Room broadcast (classroom):** a teacher taps **Send to room** — one upload fans out to everyone in that room only. Live accept-count, auto-send, resend for stragglers, room announcements.
+- **Private:** P2P first (DTLS encrypted), TURN/relay fallback. Server only signals — files are never stored. No database, no accounts.
+- **Fast:** 64KB DataChannel chunks with proper backpressure, larger relay chunks, streaming receive (no base64 concat), progress + speed, screen WakeLock for big transfers.
+- **PWA:** installable, dark/light themes, responsive phone → desktop UI.
 
 ## Run locally
 
@@ -19,7 +19,7 @@ npm start
 
 **Same WiFi (phone/laptop):** open `http://<your-lan-ip>:3000` (e.g. `http://10.0.163.127:3000` — check `/debug` or `ipconfig` for yours). A `localhost` tab is bridged with private-LAN devices, so the PC can stay on `localhost:3000` while the phone uses the LAN URL. Allow the Windows firewall prompt for Node.js (Private networks).
 
-Quick test: open two tabs → click a peer → send a file → Accept. Room test: join both tabs to `TEST1` → 📢 Send to room from one → Accept popup in the other.
+Quick test: open two tabs → click a peer → send a file → Accept. Room test: join both tabs to `TEST1` → Send to room from one → Accept popup in the other.
 
 ## Host on GitHub + Render
 
@@ -29,12 +29,12 @@ Quick test: open two tabs → click a peer → send a file → Accept. Room test
    git add -A
    git commit -m "sdfdrop"
    git branch -M main
-   git remote add origin https://github.com/<you>/sdfdrop.git
+   git remote add origin https://github.com/sdfprwz/sdfdrop_v2.git
    git push -u origin main
    ```
 
 2. **Render (backend + frontend in one service)**
-   - New → Web Service → connect your `sdfdrop` repo (or deploy via `render.yaml` blueprint).
+   - New → Web Service → connect your `sdfdrop_v2` repo (or deploy via `render.yaml` blueprint).
    - Build: `npm install` · Start: `npm start` · Health check: `/health`.
    - Open `https://<your-app>.onrender.com` on both devices → same-WiFi auto-discovery works immediately.
    - Free tier sleeps when idle — first load after sleep takes ~30s, then it reconnects by itself.
@@ -52,19 +52,19 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
    │  3. offer/answer/ICE exchanged via server (signaling only)            │
    └══════════════ WebRTC DataChannel (files, E2E encrypted) ═════════════┘
                     ↳ P2P fails? → WS relay chunks via server (fallback)
-                    ↳ 📢 Room broadcast? → one upload, server fans out to room
+                    ↳ Room broadcast? → one upload, server fans out to room
 ```
 
-- **Discovery:** same WiFi = shared network keys (exact public IPv4 + IPv6 `/64` prefix + private `/24`) **plus a client-reported private-LAN hint** (WebRTC host candidates, e.g. `192.168.1.0/24`) so phones/laptops match even when their public exit IPs differ (IPv4-vs-IPv6, CGNAT pools, Private Relay). `localhost` bridged with private LAN. Plus custom rooms (cap 100 members), presence re-announce every 25s, ↻ Rescan button, and auto-rescan while the radar is empty. Open `/debug` on both devices — matching key hashes means auto-discovery will work.
+- **Discovery:** same WiFi = shared network keys (exact public IPv4 + IPv6 `/64` prefix + private `/24`) **plus a client-reported private-LAN hint** (WebRTC host candidates, e.g. `192.168.1.0/24`) so phones/laptops match even when their public exit IPs differ (IPv4-vs-IPv6, CGNAT pools, Private Relay). `localhost` bridged with private LAN. Plus custom rooms (cap 100 members), presence re-announce every 25s, Rescan button, and auto-rescan while the radar is empty. Open `/debug` on both devices — matching key hashes means auto-discovery will work.
 - **STUN/TURN:** Google STUN + OpenRelay TURN by default. Bring your own via env: `TURN_URLS`, `TURN_USER`, `TURN_PASS` (see `render.yaml`).
 - **Endpoints:** `/health` · `/config` · `/stats` (gated) · `/debug` · WebSocket at `/ws`.
 
 ## Classroom broadcast
 
 1. Teacher + students join the same room code. Banner shows the live headcount.
-2. Teacher → **📢 Send to room** → picks files. Students get an Accept prompt tagged with the room.
+2. Teacher → **Send to room** → picks files. Students get an Accept prompt tagged with the room.
 3. Teacher watches accepts (`Send now (23/50)`) → **Send now** or 45s auto-send. One upload, everyone gets a copy.
-4. **↻ Resend** covers late accepters; ✕ Cancel notifies the room; **📢 Room** in the text box sends announcements.
+4. **Resend** covers late accepters; Cancel notifies the room; **Room** in the text box sends announcements.
 
 ## Security model & limits
 
@@ -73,7 +73,7 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 - **Anti-abuse caps (env-tunable):** `MAX_CONN_PER_IP` (5), `MSG_MAX_PER_WINDOW` (60/10s), 3 rooms/peer, relay/broadcast file cap 2GB default (`RELAY_MAX_BYTES`, effectively no limit — raise/lower via env), text 8KB, chunks ≤100KB, signals ≤20KB, header-before-chunks sessions.
 - **Headers:** `nosniff`, `SAMEORIGIN` framing, minimal CSP, HSTS on https, no `X-Powered-By`. No third-party scripts (QR generator vendored in `public/vendor/` — scannable canvas QR, no CDN).
 - **Detailed `/stats`** gated to localhost/direct-LAN or `?token=ADMIN_TOKEN`. `/debug` returns hashes only.
-- **Large files:** no fixed 100MB cap (relay/broadcast default 2GB, P2P unlimited); transfers have ✕ Cancel; Blob URLs capped/revoked; stale transfers expire after 5 min.
+- **Large files:** no fixed 100MB cap (relay/broadcast default 2GB, P2P unlimited); transfers have Cancel; Blob URLs capped/revoked; stale transfers expire after 5 min.
 - **PWA:** `sdfdrop-v2` cache, network-first navigations so updates apply.
 
 ## Troubleshooting
@@ -87,7 +87,7 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 ## Project structure
 
 ```
-sdfdrop/
+sdfdrop_v2/
 ├── server.js            # signaling + relay + room fan-out (Express + ws)
 ├── render.yaml          # Render blueprint (health check, env placeholders)
 ├── package.json
@@ -98,5 +98,7 @@ sdfdrop/
     ├── manifest.webmanifest
     └── sw.js            # PWA shell (v2, network-first pages)
 ```
+
+Repo: https://github.com/sdfprwz/sdfdrop_v2
 
 MIT — built for sdfdrop.
