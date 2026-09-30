@@ -33,7 +33,7 @@
   let ws=null, myId=null, peers=[], myRoom=null, iceServers=[{urls:'stun:stun.l.google.com:19302'}];
   let retryMs=1000, connectTimer=null, lastServerMsg=Date.now(), myNetGroup='…', watchdogTimer=null;
   let manualClose=false;
-  const pcs=new Map(); // peerId -> {pc, dc, ready, mode, queue:Promise}
+  const pcs=new Map(); // peerId -> {pc, dc, ready, mode:'p2p'|'relay', state:'new'|'connecting'|'connected'|'relay', path:'lan'|'direct'|'turn'|'relay'|'unknown', waiters:[]}
   const pendingAccept=new Map(); // transferId -> {resolve,reject} (1-to-1)
   const broadcastWaits=new Map(); // transferId -> {accepted:Set, onAccept, room} (1-to-room)
   const incoming=new Map(); // transferId -> {meta, chunks, received, from, mode, el...}
@@ -150,7 +150,7 @@
 
   // ---------- websocket (hardened: watchdog + clean reconnect + room rejoin) ----------
   function clearPeerConnections(){
-    for(const[,c]of pcs){try{c.dc?.close()}catch{}try{c.pc?.close()}catch{}}
+    for(const[,c]of pcs){try{if(c.connectTimer)clearTimeout(c.connectTimer);}catch{}try{if(c.disconnectTimer)clearTimeout(c.disconnectTimer);}catch{}try{c.dc?.close()}catch{}try{c.pc?.close()}catch{}}
     pcs.clear();
   }
   async function connect(){
@@ -473,8 +473,206 @@
     for(const p of dests)await sendTextTo(p,t);
   };
 
-  // ---------- WebRTC ----------
+  // ---------- WebRTC (P2P strongly preferred; WS relay is last fallback) ----------
   function rtcConfig(){return{iceServers,sdpSemantics:'unified-plan'};}
+  // Policy: always attempt WebRTC first and let the browser ICE agent pick the
+  // real path (host/srflx/prflx/relay). Never force iceTransportPolicy:'relay'.
+  // WS file relay is used only after genuine P2P failure. Room broadcast is
+  // intentionally server-mediated and untouched by this state machine.
+  const P2P_CONNECT_TIMEOUT = 15000; // wait for slow ICE; do NOT cut over after 4s
+  const P2P_DISCONNECT_TIMEOUT = 5000; // recovery window for transient 'disconnected'
+  function logP2P(peerId,msg){try{console.log(`[sdfdrop] peer=${peerId} ${msg}`);}catch{}}
+  function isP2PMode(m){return m==='p2p'||(typeof m==='string'&&m.indexOf('p2p-')===0);}
+  // Actual selected ICE candidate pair -> real path. Never infer LAN from the
+  // server's discovery/mode flag; only from the selected pair. Tolerates modern
+  // mDNS-obfuscated host candidates (type is still 'host' even when the address
+  // is 'xxx.local' instead of a literal 192.168.x.x).
+  async function getConnectionPath(pc){
+    try{
+      const stats=await pc.getStats();
+      const locals=new Map(), remotes=new Map();
+      let sel=null, fallback=null;
+      stats.forEach(s=>{
+        if(s.type==='local-candidate')locals.set(s.id,s);
+        else if(s.type==='remote-candidate')remotes.set(s.id,s);
+        else if(s.type==='candidate-pair'){
+          if(s.state==='succeeded'&&(s.nominated||s.selected))sel=s;
+          else if(s.state==='succeeded'&&!fallback)fallback=s;
+        }
+      });
+      const pair=sel||fallback;
+      if(!pair)return{path:'unknown',localType:'unknown',remoteType:'unknown'};
+      const lc=locals.get(pair.localCandidateId), rc=remotes.get(pair.remoteCandidateId);
+      const localType=(lc&&(lc.candidateType||lc.type))||'unknown';
+      const remoteType=(rc&&(rc.candidateType||rc.type))||'unknown';
+      let path='unknown';
+      if(localType==='relay'||remoteType==='relay')path='turn';
+      else if(localType==='host'&&remoteType==='host')path='lan';
+      else if(localType!=='unknown'&&remoteType!=='unknown')path='direct';
+      return{path,localType:String(localType),remoteType:String(remoteType),
+        localAddr:(lc&&(lc.address||lc.ip))||'',remoteAddr:(rc&&(rc.address||rc.ip))||''};
+    }catch{return{path:'unknown',localType:'unknown',remoteType:'unknown'};}
+  }
+  function pathBadgeText(path){
+    if(path==='lan')return'⚡ Direct P2P • LAN';
+    if(path==='direct')return'⚡ Direct P2P';
+    if(path==='turn')return'🟠 P2P via TURN';
+    if(path==='relay')return'🌐 Server relay';
+    return'P2P connected ✓';
+  }
+  function transferModeLabel(mode,path){
+    if(mode==='room')return'📢 room';
+    if(mode==='relay')return'🌐 Server relay';
+    if(mode==='p2p-lan'||path==='lan')return'⚡ LAN P2P';
+    if(mode==='p2p-turn'||path==='turn')return'🟠 P2P via TURN';
+    if(mode==='p2p-direct')return'⚡ Direct P2P';
+    if(mode==='p2p')return path==='lan'?'⚡ LAN P2P':path==='turn'?'🟠 P2P via TURN':'⚡ Direct P2P';
+    return'⚡ Direct P2P';
+  }
+  function detailedP2PMode(c){
+    if(!c||c.mode==='relay')return'relay';
+    if(c.path==='lan')return'p2p-lan';
+    if(c.path==='turn')return'p2p-turn';
+    return'p2p-direct';
+  }
+  function resolveWaiters(c){
+    const w=c.waiters||[];c.waiters=[];
+    for(const r of w){try{r(c);}catch{}}
+  }
+  function clearConnTimers(c){
+    if(c.connectTimer){clearTimeout(c.connectTimer);c.connectTimer=null;}
+    if(c.disconnectTimer){clearTimeout(c.disconnectTimer);c.disconnectTimer=null;}
+  }
+  function destroyConn(peerId){
+    const c=pcs.get(peerId);if(!c)return;
+    clearConnTimers(c);
+    try{c.dc?.close()}catch{}
+    try{c.pc?.close()}catch{}
+    pcs.delete(peerId);
+  }
+  function settleRelay(peerId,c,reason){
+    if(!c||c.state==='relay')return;
+    c.state='relay';c.mode='relay';c.ready=true;c.path='relay';c.pathDetail=null;
+    clearConnTimers(c);
+    netBadge.textContent='🌐 Server relay';
+    logP2P(peerId,`→ WebSocket relay (${reason})`);
+    resolveWaiters(c);
+  }
+  async function refreshPath(peerId,c){
+    const info=await getConnectionPath(c.pc);
+    if(c.state!=='relay'){
+      if(info.path!=='unknown'){c.path=info.path;c.pathDetail=info;}
+      // Second look shortly after connect: stats sometimes lack the nominated
+      // pair on the very first getStats after dc open (slow TURN allocation).
+      if((c.path==='unknown'||!c.path)&&info.path==='unknown'){
+        setTimeout(async()=>{
+          try{
+            if(c.state!=='connected')return;
+            const info2=await getConnectionPath(c.pc);
+            if(info2.path!=='unknown'){c.path=info2.path;c.pathDetail=info2;
+              netBadge.textContent=pathBadgeText(c.path);
+              try{netBadge.title=`${info2.localType}/${info2.remoteType} → ${c.path}`;}catch{}
+              if(info2.path==='lan')logP2P(peerId,`ICE ${info2.localType}/${info2.remoteType} → LAN P2P`);
+              else if(info2.path==='direct')logP2P(peerId,`ICE ${info2.localType}/${info2.remoteType} → Direct P2P`);
+              else if(info2.path==='turn')logP2P(peerId,`ICE ${info2.localType}/${info2.remoteType} → TURN`);
+            }
+          }catch{}
+        },2000);
+      }
+    }
+    if(c.state!=='relay'){
+      const label=pathBadgeText(c.path);
+      netBadge.textContent=label;
+      try{netBadge.title=`${info.localType}/${info.remoteType} → ${c.path}`;}catch{}
+    }
+    if(info.path==='lan')logP2P(peerId,`ICE ${info.localType}/${info.remoteType} → LAN P2P`);
+    else if(info.path==='direct')logP2P(peerId,`ICE ${info.localType}/${info.remoteType} → Direct P2P`);
+    else if(info.path==='turn')logP2P(peerId,`ICE ${info.localType}/${info.remoteType} → TURN`);
+    return info;
+  }
+  function settleConnected(peerId,c,via){
+    const wasRelay=c.state==='relay';
+    c.state='connected';c.mode='p2p';c.ready=true;c.dcOpen=true;
+    if(c.connectTimer){clearTimeout(c.connectTimer);c.connectTimer=null;}
+    if(c.disconnectTimer){clearTimeout(c.disconnectTimer);c.disconnectTimer=null;}
+    // Refresh the real path (LAN vs direct vs TURN) then resolve waiters so the
+    // transfer locks in the correct transport + label.
+    refreshPath(peerId,c).then(()=>resolveWaiters(c));
+    if(wasRelay)logP2P(peerId,`late P2P upgrade via ${via} (existing relay transfers stay on relay)`);
+    else logP2P(peerId,`P2P connected via ${via}`);
+  }
+  function checkP2PState(peerId,c){
+    if(!c||c.state==='connected'||c.state==='relay'){
+      // Already decided — except: a 'disconnected' after 'connected' needs a
+      // recovery window, and a late 'failed' after relay stays relay.
+      if(c.state==='connected'){
+        const cs=c.pc.connectionState, ice=c.pc.iceConnectionState;
+        if(ice==='failed'||cs==='failed'){settleRelay(peerId,c,`ice failed after connect (${ice}/${cs})`);return;}
+        if(ice==='disconnected'||cs==='disconnected'){
+          if(!c.disconnectTimer){
+            netBadge.textContent='P2P reconnecting…';
+            logP2P(peerId,`ICE ${ice}/${cs} — waiting ${P2P_DISCONNECT_TIMEOUT}ms for recovery`);
+            c.disconnectTimer=setTimeout(()=>{
+              c.disconnectTimer=null;
+              const ice2=c.pc.iceConnectionState, cs2=c.pc.connectionState;
+              if(ice2==='connected'||ice2==='completed'||cs2==='connected'||(c.dc&&c.dc.readyState==='open')){
+                logP2P(peerId,'recovered to P2P — continuing');
+                return;
+              }
+              if(ice2==='failed'||cs2==='failed'||ice2==='disconnected'||cs2==='disconnected'||ice2==='closed'||cs2==='closed'){
+                settleRelay(peerId,c,`disconnect timeout (${ice2}/${cs2})`);
+              }
+            },P2P_DISCONNECT_TIMEOUT);
+          }
+          return;
+        }
+        if(ice==='closed'||cs==='closed'){
+          if(!c.dc||c.dc.readyState!=='open')settleRelay(peerId,c,`closed (${ice}/${cs})`);
+          return;
+        }
+      }
+      return;
+    }
+    const cs=c.pc.connectionState, ice=c.pc.iceConnectionState;
+    if(ice==='connected'||ice==='completed'||cs==='connected'){
+      // ICE found a path — wait for the DataChannel open to resolve; the
+      // dc.onopen handler calls settleConnected. If the DC is already open,
+      // settle now (covers stats-first ordering).
+      if(c.dc&&c.dc.readyState==='open')settleConnected(peerId,c,`ice ${ice}/${cs}`);
+      else{
+        c.state='connecting';
+        netBadge.textContent='P2P connecting…';
+      }
+      return;
+    }
+    if(ice==='failed'||cs==='failed'){
+      settleRelay(peerId,c,`genuine ICE failure (${ice}/${cs})`);
+      return;
+    }
+    if(ice==='disconnected'||cs==='disconnected'){
+      if(!c.disconnectTimer){
+        netBadge.textContent='P2P reconnecting…';
+        logP2P(peerId,`ICE ${ice}/${cs} — waiting ${P2P_DISCONNECT_TIMEOUT}ms for recovery`);
+        c.disconnectTimer=setTimeout(()=>{
+          c.disconnectTimer=null;
+          const ice2=c.pc.iceConnectionState, cs2=c.pc.connectionState;
+          if(ice2==='connected'||ice2==='completed'||cs2==='connected'||(c.dc&&c.dc.readyState==='open')){
+            if(c.dc&&c.dc.readyState==='open')settleConnected(peerId,c,'recovered');
+            return;
+          }
+          settleRelay(peerId,c,`disconnect timeout (${ice2}/${cs2})`);
+        },P2P_DISCONNECT_TIMEOUT);
+      }
+      return;
+    }
+    if(ice==='closed'||cs==='closed'){
+      settleRelay(peerId,c,`closed (${ice}/${cs})`);
+      return;
+    }
+    // Still negotiating (new/checking/connecting): keep waiting for ICE.
+    // Do NOT fall back here — only the 15s connect timer may fall back.
+    if(c.state==='new'){c.state='connecting';netBadge.textContent='P2P connecting…';}
+  }
   // Dial new peers the moment they appear: the DataChannel is already open
   // when the user taps Send, so transfers start instantly (no offer/answer/
   // ICE/DTLS handshake in the critical path). Lower peer id dials — the rule
@@ -482,8 +680,8 @@
   function warmConnections(){
     if(!myId)return;
     const seen=new Set(peers.map(p=>p.id));
-    for(const [pid,c]of pcs){
-      if(!seen.has(pid)){try{c.dc?.close()}catch{}try{c.pc?.close()}catch{}pcs.delete(pid);}
+    for(const [pid]of pcs){
+      if(!seen.has(pid))destroyConn(pid);
     }
     for(const p of peers){
       if(pcs.has(p.id))continue;
@@ -494,32 +692,52 @@
     let c=pcs.get(peerId);
     if(c)return c;
     const pc=new RTCPeerConnection(rtcConfig());
-    c={pc,dc:null,ready:false,mode:'p2p',offered:false};
+    // Explicit state machine: 'new' → 'connecting' → 'connected' OR 'relay'.
+    // 'ready' means a stable transport decision exists (P2P dc open, or relay
+    // after genuine failure / 15s timeout). Never infer 'relay' from a short wait.
+    c={pc,dc:null,dcOpen:false,ready:false,mode:'p2p',state:'new',path:'unknown',pathDetail:null,offered:false,waiters:[],connectTimer:null,disconnectTimer:null};
     pcs.set(peerId,c);
     pc.onicecandidate=(e)=>{if(e.candidate)send({type:'signal',to:peerId,data:{candidate:e.candidate}});};
-    pc.onconnectionstatechange=()=>{
-      const s=pc.connectionState;
-      netBadge.textContent=s==='connected'?'P2P connected ✓':s==='connecting'?'P2P connecting…':s==='failed'?'P2P failed → relay':'P2P ready';
-      if(s==='failed'){c.mode='relay';c.ready=true;if(c.onReady)c.onReady();}
-    };
+    pc.onconnectionstatechange=()=>{checkP2PState(peerId,c);};
+    pc.oniceconnectionstatechange=()=>{checkP2PState(peerId,c);};
     pc.ondatachannel=(e)=>{attachDC(peerId,e.channel);};
+    const armConnectTimer=()=>{
+      if(c.connectTimer)clearTimeout(c.connectTimer);
+      c.connectTimer=setTimeout(()=>{
+        c.connectTimer=null;
+        if(c.state==='connected'||c.state==='relay')return;
+        const ice=c.pc.iceConnectionState, cs=c.pc.connectionState;
+        if(c.dc&&c.dc.readyState==='open'){settleConnected(peerId,c,'late connect-timer check');return;}
+        if(ice==='connected'||ice==='completed'||cs==='connected'){
+          // ICE found a path but the DataChannel hasn't opened yet (slow DTLS).
+          // Give it one short grace window, then fall back if still unusable.
+          logP2P(peerId,`ICE ${ice}/${cs} but no DataChannel yet — 5s grace`);
+          c.connectTimer=setTimeout(()=>{
+            c.connectTimer=null;
+            if(c.state==='connected'||c.state==='relay')return;
+            if(c.dc&&c.dc.readyState==='open'){settleConnected(peerId,c,'grace-period dc open');return;}
+            settleRelay(peerId,c,`no DataChannel after grace (${c.pc.iceConnectionState}/${c.pc.connectionState})`);
+          },5000);
+          return;
+        }
+        settleRelay(peerId,c,`connect timeout ${P2P_CONNECT_TIMEOUT}ms (${ice}/${cs})`);
+      },P2P_CONNECT_TIMEOUT);
+    };
+    armConnectTimer();
     if(initiator){
       const dc=pc.createDataChannel('sdfdrop',{ordered:true});
       attachDC(peerId,dc);
       pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>{
         send({type:'signal',to:peerId,data:{sdp:pc.localDescription}});
-      }).catch(()=>{c.mode='relay';c.ready=true;if(c.onReady)c.onReady();});
-      // safety: if no connection quickly, fall back to relay (server fan-out
-      // is faster than waiting out a dead P2P path)
-      setTimeout(()=>{if(pc.connectionState!=='connected'&&!c.ready){c.mode='relay';c.ready=true;if(c.onReady)c.onReady();}},4000);
+      }).catch(()=>{settleRelay(peerId,c,'offer failed');});
     }
     return c;
   }
   function attachDC(peerId,dc){
     const c=pcs.get(peerId);if(!c)return;
     c.dc=dc;dc.binaryType='arraybuffer';
-    dc.onopen=()=>{c.ready=true;c.mode='p2p';if(c.onReady)c.onReady();netBadge.textContent='P2P connected ✓';};
-    dc.onclose=()=>{c.ready=false;};
+    dc.onopen=()=>{settleConnected(peerId,c,'datachannel open');};
+    dc.onclose=()=>{c.dcOpen=false;if(c.state!=='relay')c.ready=false;checkP2PState(peerId,c);};
     dc.onmessage=(e)=>{
       if(typeof e.data==='string'){try{handlePacket(peerId,JSON.parse(e.data),'p2p')}catch{}}
       else handleBinary(peerId,e.data,'p2p');
@@ -535,7 +753,7 @@
         else if(data.sdp.type==='offer'&&c.pc.signalingState==='have-local-offer'){
           // Glare (both offered): designated dialer wins, the other stands down.
           if(myId&&from&&myId<from)return;
-          try{c.dc?.close()}catch{}try{c.pc.close()}catch{}pcs.delete(from);
+          destroyConn(from);
           c=getConn(from,false);
         }
         await c.pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
@@ -549,10 +767,13 @@
       }
     }catch(e){console.warn('signal err',e);}
   }
+  // Waits for a GENUINE transport decision: P2P connected (dc open) OR relay
+  // after genuine ICE failure / 15s timeout. Never resolves 'relay' early.
   function waitReady(peerId, initiator=true){
     const c=getConn(peerId,initiator);
-    if(c.ready&&(c.mode==='relay'||(c.dc&&c.dc.readyState==='open')))return Promise.resolve(c);
-    return new Promise(res=>{c.onReady=()=>res(c);if(c.mode==='relay'&&c.ready)res(c);});
+    if(c.state==='connected'&&c.dc&&c.dc.readyState==='open')return Promise.resolve(c);
+    if(c.state==='relay'&&c.ready)return Promise.resolve(c);
+    return new Promise(res=>{c.waiters.push(res);});
   }
 
   // ---------- transfers UI ----------
@@ -562,12 +783,15 @@
     while(blobUrls.length>20){const old=blobUrls.shift();try{URL.revokeObjectURL(old)}catch{}}
   }
   window.addEventListener('pagehide',()=>{for(const u of blobUrls){try{URL.revokeObjectURL(u)}catch{}}});
-  function addTransfer({id,name,size,peerName,dir,mode}){
+  function addTransfer({id,name,size,peerName,dir,mode,path}){
     transfersEl.querySelector('.muted')?.remove();
     const d=document.createElement('div');d.className='t-item';d.id='t-'+id;
+    // Backward compatible: accepts legacy 'p2p'/'relay'/'room' plus detailed
+    // 'p2p-lan'/'p2p-direct'/'p2p-turn'. Detailed path refines the label.
+    const label=transferModeLabel(mode,path);
     d.innerHTML=`<div class="t-head"><strong>${dir==='up'?'📤':'📥'} ${escapeHtml(name)}</strong><span>${fmtSize(size)}</span></div>
       <progress max="100" value="0"></progress>
-      <div class="t-sub"><span class="st">${dir==='up'?'To':'From'} ${escapeHtml(peerName)} • ${mode==='room'?'📢 room':mode==='relay'?'🌐 relay':'⚡ p2p'}</span><span class="sp"></span></div>
+      <div class="t-sub"><span class="st">${dir==='up'?'To':'From'} ${escapeHtml(peerName)} • ${label}</span><span class="sp"></span></div>
       <div class="t-act"></div>`;
     transfersEl.prepend(d);
     const bar=d.querySelector('progress'),st=d.querySelector('.st'),sp=d.querySelector('.sp'),act=d.querySelector('.t-act');
@@ -599,23 +823,41 @@
   }
   function sendTransferCancel(peerId,id,mode='relay'){
     const c=pcs.get(peerId);
-    if(mode==='p2p' && c?.dc?.readyState==='open'){
+    if(isP2PMode(mode) && c?.dc?.readyState==='open'){
       try{c.dc.send(JSON.stringify({kind:'file-cancelled',id}));return;}catch{}
     }
     send({type:'relay',to:peerId,data:{kind:'file-cancelled',id}});
   }
   async function sendOneFile(peer,file){
+    // Lock exactly one transport BEFORE the file header is sent. waitReady only
+    // resolves on a stable decision (P2P dc open, or relay after genuine ICE
+    // failure / 15s timeout), so a slow ICE negotiation never pushes a large
+    // file onto the Render relay. The captured `transport` never changes for
+    // this transfer — no split-brain P2P+relay mixing.
     const id=uid(6);
     const c=await waitReady(peer.id,true);
-    const mode=c.mode;
-    const ui=addTransfer({id,name:file.name,size:file.size,peerName:peer.name,dir:'up',mode});
-    if(mode==='relay'){await sendFileRelay(peer,file,id,ui);return;}
-    // p2p
+    const transport=(c.state==='relay'||c.mode==='relay')?'relay':'p2p';
+    const uiMode=transport==='relay'?'relay':detailedP2PMode(c);
+    const ui=addTransfer({id,name:file.name,size:file.size,peerName:peer.name,dir:'up',mode:uiMode,path:c.path});
+    if(transport==='relay'){await sendFileRelay(peer,file,id,ui);return;}
+    // p2p — waitReady guarantees an open DataChannel; re-check for the tiny
+    // race where it closed between resolve and header send.
     const dc=c.dc;
-    if(!dc||dc.readyState!=='open'){await sendFileRelay(peer,file,id,ui);return;}
-    // header + wait accept
+    if(!dc||dc.readyState!=='open'){
+      ui.fail('P2P dropped before start — retry to send');
+      try{send({type:'relay',to:peer.id,data:{kind:'file-cancelled',id}});}catch{}
+      return;
+    }
+    // header + wait accept (sent ONLY on the locked P2P transport)
     const accepted=new Promise((res,rej)=>{pendingAccept.set(id,{res,rej});setTimeout(()=>rej(new Error('declined/timeout')),90000);});
-    dc.send(JSON.stringify({kind:'file-header',id,name:file.name,size:file.size,mime:file.type||'application/octet-stream'}));
+    try{
+      dc.send(JSON.stringify({kind:'file-header',id,name:file.name,size:file.size,mime:file.type||'application/octet-stream'}));
+    }catch{
+      ui.fail('P2P unavailable at start — retry to send');
+      pendingAccept.delete(id);
+      try{send({type:'relay',to:peer.id,data:{kind:'file-cancelled',id}});}catch{}
+      return;
+    }
     toast(`Waiting for ${peer.name} to accept…`,'info');
     try{await accepted;}catch{ui.fail('declined');pendingAccept.delete(id);return;}
     pendingAccept.delete(id);
@@ -624,16 +866,37 @@
     // queued, and wake on bufferedamountlow (no fixed per-chunk sleep).
     dc.bufferedAmountLowThreshold=512*1024;
     let offset=0;
+    let p2pFailed=false;
     while(offset<file.size){
       if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}
+      if(dc.readyState!=='open'){p2pFailed=true;break;}
       if(dc.bufferedAmount>2*1024*1024){await waitForBuffer(dc);if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}}
+      if(dc.readyState!=='open'){p2pFailed=true;break;}
       const slice=file.slice(offset,offset+CHUNK);
       const buf=await slice.arrayBuffer();
       if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}
-      try{dc.send(buf);}catch{await sendFileRelay(peer,file,id,ui);return;}
+      if(dc.readyState!=='open'){p2pFailed=true;break;}
+      try{dc.send(buf);}catch{p2pFailed=true;break;}
       offset+=buf.byteLength;ui.update(offset);
     }
-    dc.send(JSON.stringify({kind:'file-done',id}));
+    if(p2pFailed){
+      // Mid-transfer P2P failure: the receiver already holds a P2P header +
+      // partial binary chunks and cannot resume over relay (protocols differ:
+      // binary vs base64, no resume offsets). Silently restarting the whole
+      // file via relay would corrupt/duplicate it — fail loudly instead.
+      pendingAccept.delete(id);
+      try{send({type:'relay',to:peer.id,data:{kind:'file-cancelled',id}});}catch{}
+      try{if(dc.readyState==='open')dc.send(JSON.stringify({kind:'file-cancelled',id}));}catch{}
+      ui.fail(`P2P dropped at ${fmtSize(offset)} of ${fmtSize(file.size)} — retry to send`);
+      toast('P2P connection dropped mid-transfer — file NOT completed. Please retry.','err');
+      return;
+    }
+    try{dc.send(JSON.stringify({kind:'file-done',id}));}
+    catch{
+      try{send({type:'relay',to:peer.id,data:{kind:'file-cancelled',id}});}catch{}
+      ui.fail('P2P dropped before finish — retry to send');
+      return;
+    }
     ui.done(null);toast(`Sent ${file.name} → ${peer.name} ✓`,'ok');
   }
   function waitForBuffer(dc){
@@ -647,11 +910,13 @@
   async function sendTextTo(peer,text){
     const id=uid(6);
     if(text.length>8192){toast('Message too long (8KB max)','err');return;}
+    // Prefer P2P; only use WS relay after a genuine P2P decision (failure /
+    // 15s timeout). No short 4s race — small texts can wait for the right path.
     try{
-      const c=await Promise.race([waitReady(peer.id,true),new Promise(r=>setTimeout(()=>r(null),4000))]);
-      if(c&&c.mode!=='relay'&&c.dc&&c.dc.readyState==='open'){
+      const c=await waitReady(peer.id,true);
+      if(c.state!=='relay'&&c.mode!=='relay'&&c.dc&&c.dc.readyState==='open'){
         c.dc.send(JSON.stringify({kind:'text',id,text}));
-        addTransfer({id,name:'Message ✉️',size:text.length,peerName:peer.name,dir:'up',mode:'p2p'}).done(null);
+        addTransfer({id,name:'Message ✉️',size:text.length,peerName:peer.name,dir:'up',mode:detailedP2PMode(c),path:c.path}).done(null);
       } else throw 0;
     }catch{
       send({type:'relay',to:peer.id,data:{kind:'text',id,text}});
@@ -691,9 +956,17 @@
   function handlePacket(fromId,pkt,mode){
     const peer=peers.find(p=>p.id===fromId)||{name:'device'};
     // Room broadcasts arrive as server fan-out: same handling as relay, room-tagged.
-    const tmode=pkt.room?'room':mode;
+    // For P2P receptions, refine the label from our own selected ICE pair
+    // (mirror of the sender's path): LAN vs Direct vs TURN.
+    let tmode=pkt.room?'room':mode;
+    if(tmode==='p2p'){
+      const c=pcs.get(fromId);
+      if(c&&c.path==='lan')tmode='p2p-lan';
+      else if(c&&c.path==='turn')tmode='p2p-turn';
+      else tmode='p2p-direct';
+    }
     if(pkt.kind==='file-header'){
-      if(typeof pkt.size!=='number'||!(pkt.size>=0)||(tmode!=='p2p'&&pkt.size>RELAY_MAX_BYTES)){failIncoming(pkt.id,'file too large');return;}
+      if(typeof pkt.size!=='number'||!(pkt.size>=0)||(!isP2PMode(tmode)&&pkt.size>RELAY_MAX_BYTES)){failIncoming(pkt.id,'file too large');return;}
       incoming.set(pkt.id,{meta:pkt,chunks:[],received:0,nextSeq:0,from:fromId,fromName:peer.name,mode:tmode,room:pkt.room||null,ui:null,accepted:false});
       recvQueue.push(pkt.id);renderRecvModal();
       // Expire stale unaccepted transfers so dead senders can't leak memory
@@ -709,7 +982,7 @@
     }
     else if(pkt.kind==='file-chunk'){
       const inc=incoming.get(pkt.id);if(!inc)return;
-      if(inc.mode==='p2p')return;
+      if(isP2PMode(inc.mode))return;
       if(typeof pkt.chunk!=='string'||(pkt.seq!==undefined&&pkt.seq!==inc.nextSeq))return failIncoming(pkt.id,'invalid chunk sequence');
       // Decode immediately and store binary parts: concatenating one giant
       // base64 string is O(n²) and freezes/OOMs on large files.
@@ -780,7 +1053,7 @@
     const id=recvQueue[0];
     const inc=incoming.get(id);if(!inc){recvQueue.shift();renderRecvModal();return;}
     $('#recvTitle').textContent=`${inc.room?'📢 Room '+inc.room+' • ':''}📥 Incoming from ${inc.fromName}`;
-    $('#recvMeta').textContent=`${inc.meta.name} • ${fmtSize(inc.meta.size)} • ${inc.mode==='p2p'?'⚡ p2p':'🌐 relay'} • E2E encrypted 🔒`;
+    $('#recvMeta').textContent=`${inc.meta.name} • ${fmtSize(inc.meta.size)} • ${transferModeLabel(inc.mode)} • E2E encrypted 🔒`;
     $('#recvList').innerHTML=`<div>📄 <strong>${escapeHtml(inc.meta.name)}</strong> <span class="muted">${fmtSize(inc.meta.size)}</span></div>`;
     openModal('#recvModal');
     try{navigator.vibrate?.([100,50,100])}catch{}
@@ -793,7 +1066,7 @@
     // tell sender via best path (room/relay transfers are server-mediated)
     const c=pcs.get(inc.from);
     const msg=JSON.stringify({kind:'accept',id});
-    if(inc.mode!=='p2p')send({type:'relay',to:inc.from,data:{kind:'accept',id}});
+    if(!isP2PMode(inc.mode))send({type:'relay',to:inc.from,data:{kind:'accept',id}});
     else if(c?.dc?.readyState==='open')c.dc.send(msg);
     else send({type:'relay',to:inc.from,data:{kind:'accept',id}});
     // wake lock for large transfers
@@ -806,7 +1079,7 @@
     const id=recvQueue.shift();const inc=incoming.get(id);
     if(inc){incoming.delete(id);
       const c=pcs.get(inc.from);const msg=JSON.stringify({kind:'decline',id});
-      if(inc.mode!=='p2p')send({type:'relay',to:inc.from,data:{kind:'decline',id}});
+      if(!isP2PMode(inc.mode))send({type:'relay',to:inc.from,data:{kind:'decline',id}});
       else if(c?.dc?.readyState==='open')try{c.dc.send(msg)}catch{}
     }
     renderRecvModal();
