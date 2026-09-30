@@ -5,7 +5,7 @@ Fast browser-to-browser file + text sharing. Best of **Snapdrop** (zero-setup), 
 - **Same WiFi:** open sdfdrop on 2 devices → they appear on each other's radar instantly. No code, no signup.
 - **Different networks:** join the same **Room code** (e.g. `CLASS1`) or open the shared link → connects via WebRTC + TURN, with WebSocket relay fallback.
 - **Room broadcast (classroom):** a teacher taps **Send to room** — one upload fans out to everyone in that room only. Live accept-count, auto-send, resend for stragglers, room announcements.
-- **Private:** P2P first (DTLS encrypted), TURN/relay fallback. Server only signals — files are never stored. No database, no accounts.
+- **Private:** WebRTC P2P first (DTLS encrypted), direct LAN/host path preferred. TURN, then WebSocket relay as last fallback for 1-to-1 transfers. Server only signals — files are never stored. No database, no accounts.
 - **Fast:** 64KB DataChannel chunks with proper backpressure, larger relay chunks, streaming receive (no base64 concat), progress + speed, screen WakeLock for big transfers.
 - **PWA:** installable, dark/light themes, responsive phone → desktop UI.
 
@@ -50,13 +50,16 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
    │  1. hello + auto WiFi-group (IP keys) and/or Room code               │
    │  2. server sends each device its visible peers list                  │
    │  3. offer/answer/ICE exchanged via server (signaling only)            │
-   └══════════════ WebRTC DataChannel (files, E2E encrypted) ═════════════┘
-                    ↳ P2P fails? → WS relay chunks via server (fallback)
-                    ↳ Room broadcast? → one upload, server fans out to room
+                   └══════════════ WebRTC DataChannel (files, E2E encrypted) ═════════════┘
+                     ↳ direct host → srflx/prflx → TURN (browser ICE picks the path)
+                     ↳ genuine P2P failure only? → WS relay chunks via server (last resort)
+                     ↳ Room broadcast? → one upload, server fans out to room (unchanged)
 ```
 
 - **Discovery:** same WiFi = shared network keys (exact public IPv4 + IPv6 `/64` prefix + private `/24`) **plus a client-reported private-LAN hint** (WebRTC host candidates, e.g. `192.168.1.0/24`) so phones/laptops match even when their public exit IPs differ (IPv4-vs-IPv6, CGNAT pools, Private Relay). `localhost` bridged with private LAN. Plus custom rooms (cap 100 members), presence re-announce every 25s, Rescan button, and auto-rescan while the radar is empty. Open `/debug` on both devices — matching key hashes means auto-discovery will work.
-- **STUN/TURN:** Google STUN + OpenRelay TURN by default. Bring your own via env: `TURN_URLS`, `TURN_USER`, `TURN_PASS` (see `render.yaml`).
+- **STUN/TURN:** Google STUN + OpenRelay TURN by default. Bring your own via env: `TURN_URLS`, `TURN_USER`, `TURN_PASS` (see `render.yaml`). No `iceTransportPolicy: 'relay'` — direct candidates are always allowed.
+- **P2P path:** WebRTC is always attempted first with a ~15s ICE grace period (slow negotiation never triggers an early relay). Transient `disconnected` gets a ~5s recovery window; only genuine `failed`/timeout falls back to WS relay. Each transfer locks one transport before its header — no P2P+relay mixing, no silent mid-transfer restart.
+- **Path labels:** footer badge + transfer rows show the real selected ICE pair: `⚡ Direct P2P • LAN` (host/host), `⚡ Direct P2P` (direct NAT), `🟠 P2P via TURN` (relay), `🌐 Server relay` (WebSocket fallback). Browser console logs e.g. `[sdfdrop] peer=<id> ICE host/host → LAN P2P`.
 - **Endpoints:** `/health` · `/config` · `/stats` (gated) · `/debug` · WebSocket at `/ws`.
 
 ## Classroom broadcast
@@ -79,6 +82,7 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 ## Troubleshooting
 
 - **Same WiFi, can't see each other?** Same WiFi *name* on both (2.4 vs 5 GHz can isolate), VPN off. Compare `/debug` hashes on both — no shared hash (IPv6/carrier NAT) → just use a Room code, it always works.
+- **How do I confirm LAN P2P (not Render relay)?** Same-WiFi transfer should show `⚡ Direct P2P • LAN` / `⚡ LAN P2P` and console `ICE host/host → LAN P2P`. `🟠 P2P via TURN` = TURN relay; `🌐 Server relay` = WebSocket fallback after genuine failure/timeout.
 - **Room code mismatch?** Both banners must show the identical code and headcount. The sender's toast tells the truth (`Broadcasting to 0 in X` = nobody in the room).
 - **Nothing arrives after Send to room?** Students must tap Accept, then teacher taps Send now (or 45s auto-send).
 - **Layout looks broken on phone?** Hard-refresh to drop the cached stylesheet (Ctrl+Shift+R / reload twice on mobile).
