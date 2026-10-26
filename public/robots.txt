@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 Disallow:
 Sitemap: https://sdfdrop2.onrender.com/sitemap.xml
+Sitemap: https://sdfdrop.vercel.app/sitemap.xml
