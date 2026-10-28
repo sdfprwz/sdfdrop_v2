@@ -23,6 +23,14 @@ Quick test: open two tabs → click a peer → send a file → Accept. Room test
 
 ## Host on GitHub + Render
 
+### Security updates applied
+- Updated Node.js version requirement to `>=22.23.4` (see `package.json` and `.nvmrc`). This includes fixes for recent TLS and Brotli vulnerabilities.
+- Ran `npm audit fix` to upgrade vulnerable dependencies (`body-parser` to 1.20.9, `qs` to 6.16.2).
+- After deploying, **rebuild/redeploy** your service to refresh the system certificate store, mitigating the eMudhra compromised intermediate certificates. On Render, a fresh deploy pulls the latest OS CA bundle.
+- Ensure your Render environment uses the updated Node version (set the Node version in the Render settings or rely on the `engines` field).
+
+## Host on GitHub + Render
+
 1. **Push to GitHub**
    ```bash
    git init
