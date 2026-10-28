@@ -426,7 +426,7 @@
         const buf=await file.slice(off,off+RELAY_BIN_STEP).arrayBuffer();
         send({type:'broadcast',room,data:{kind:'file-chunk',id,seq:seq++,chunk:b64encode(buf),last:off+RELAY_BIN_STEP>=file.size}});
         ui.update(Math.min(file.size,off+RELAY_BIN_STEP));
-        while(ws&&ws.bufferedAmount>1024*1024){await new Promise(r=>setTimeout(r,20));}
+        while(ws&&typeof ws.bufferedAmount==='number'&&ws.bufferedAmount>1024*1024){await new Promise(r=>setTimeout(r,20));}
       }
       send({type:'broadcast',room,data:{kind:'file-done',id}});
       ui.done(null);broadcastWaits.delete(id);
@@ -773,7 +773,20 @@
     const c=getConn(peerId,initiator);
     if(c.state==='connected'&&c.dc&&c.dc.readyState==='open')return Promise.resolve(c);
     if(c.state==='relay'&&c.ready)return Promise.resolve(c);
-    return new Promise(res=>{c.waiters.push(res);});
+    // Add a hard timeout: after 30 s without a definitive transport decision, fallback to relay.
+    const timeoutMs = 30000;
+    let timeoutId;
+    const timeoutPromise = new Promise(res => {
+      timeoutId = setTimeout(() => {
+        // If still not resolved, force relay fallback.
+        if(c.state !== 'relay'){
+          settleRelay(peerId, c, 'waitReady timeout');
+        }
+        res(c);
+      }, timeoutMs);
+    });
+    const waitPromise = new Promise(res => {c.waiters.push(res);});
+    return Promise.race([waitPromise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
   }
 
   // ---------- transfers UI ----------
@@ -943,7 +956,7 @@
       const buf=await file.slice(off,off+RELAY_BIN_STEP).arrayBuffer();
       send({type:'relay',to:peer.id,data:{kind:'file-chunk',id,seq:seq++,chunk:b64encode(buf),last:off+RELAY_BIN_STEP>=file.size}});
       ui.update(Math.min(file.size,off+RELAY_BIN_STEP));
-      while(ws&&ws.bufferedAmount>1024*1024){await new Promise(r=>setTimeout(r,20));}
+      while(ws&&typeof ws.bufferedAmount==='number'&&ws.bufferedAmount>1024*1024){await new Promise(r=>setTimeout(r,20));}
     }
     send({type:'relay',to:peer.id,data:{kind:'file-done',id}});
     ui.done(null);

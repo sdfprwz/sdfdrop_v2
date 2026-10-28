@@ -81,7 +81,7 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 
 - **Trust:** encryption is end-to-end only if you trust the signaling server (a malicious server could swap SDP offers). Self-host; don't trade sensitive files over random public instances.
 - **WebSocket origin policy:** same-origin always allowed (Render domain, LAN IP, localhost). Cross-origin only via `ALLOWED_ORIGINS` (e.g. your `https://<you>.github.io`). No `?ws=` override.
-- **Anti-abuse caps (env-tunable):** `MAX_CONN_PER_IP` (5), `MSG_MAX_PER_WINDOW` (60/10s), 3 rooms/peer, relay/broadcast file cap 2GB default (`RELAY_MAX_BYTES`, effectively no limit — raise/lower via env), text 8KB, chunks ≤100KB, signals ≤20KB, header-before-chunks sessions.
+- **Anti-abuse caps (env-tunable):** `MAX_CONN_PER_IP` (12), `MSG_MAX_PER_WINDOW` (60/10s), 3 rooms/peer, relay/broadcast file cap 2GB default (`RELAY_MAX_BYTES`, effectively no limit — raise/lower via env), text 8KB, chunks ≤100KB, signals ≤20KB, header-before-chunks sessions.
 - **Headers:** `nosniff`, `SAMEORIGIN` framing, minimal CSP, HSTS on https, no `X-Powered-By`. No third-party scripts (QR generator vendored in `public/vendor/` — scannable canvas QR, no CDN).
 - **Detailed `/stats`** gated to localhost/direct-LAN or `?token=ADMIN_TOKEN`. `/debug` returns hashes only.
 - **Large files:** no fixed 100MB cap (relay/broadcast default 2GB, P2P unlimited); transfers have Cancel; Blob URLs capped/revoked; stale transfers expire after 5 min.

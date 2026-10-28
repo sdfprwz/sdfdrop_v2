@@ -126,7 +126,7 @@ const peers = new Map();
 const rooms = new Map();
 
 // ---- abuse guards (lightweight, in-memory; tuned for small Render instances) ----
-const MAX_CONN_PER_IP = parseInt(process.env.MAX_CONN_PER_IP || '5', 10);
+const MAX_CONN_PER_IP = parseInt(process.env.MAX_CONN_PER_IP || '12', 10);
 const MSG_WINDOW_MS = 10_000;
 const MSG_MAX_PER_WINDOW = parseInt(process.env.MSG_MAX_PER_WINDOW || '60', 10);
 const MAX_ROOMS_PER_PEER = 3;
