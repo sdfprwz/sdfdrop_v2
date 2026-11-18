@@ -1,6 +1,6 @@
 /* sdfdrop service worker — network-first navigations, cache-first assets */
-const CACHE = 'sdfdrop-v8';
-const ASSETS = ['./', './index.html', './hostmeta.js', './styles.css', './app.js', './landing.js', './vendor/qrcode.min.js', './manifest.webmanifest', './logo-mark.png', './icon-192.png', './icon-512.png', './favicon-48.png', './favicon-32.png', './hero-illustration.png'];
+const CACHE = 'sdfdrop-v15';
+const ASSETS = ['./', './index.html', './hostmeta.js', './styles.css', './app.js', './landing-motion.js', './landing.js', './vendor/qrcode.min.js', './manifest.webmanifest', './logo-mark.png', './icon-192.png', './icon-512.png', './favicon-48.png', './favicon-32.png', './hero-illustration.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
@@ -14,6 +14,18 @@ self.addEventListener('fetch', (e) => {
   if (u.pathname === '/health' || u.pathname === '/config' || u.pathname === '/stats' ||
       u.pathname === '/debug' || u.pathname === '/ws' ||
       u.pathname === '/robots.txt' || u.pathname === '/sitemap.xml') return;
+  // Code assets must be network-first: a cache-first app.js/styles.css made
+  // updates invisible until a hard refresh (the "preview never appears" bug).
+  if (/\.(?:js|css|webmanifest)$/.test(u.pathname)) {
+    e.respondWith(
+      fetch(e.request).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        return res;
+      }).catch(() => caches.match(e.request))
+    );
+    return;
+  }
   // Navigations go to the network first so deploys never serve a stale shell.
   if (e.request.mode === 'navigate') {
     e.respondWith(

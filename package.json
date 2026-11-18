@@ -1,7 +1,7 @@
 {
   "name": "sdfdrop",
   "version": "1.0.0",
-  "description": "sdfdrop — local + internet P2P file sharing (Snapdrop/PairDrop/AirDrop best mix)",
+  "description": "sdfdrop — fast, private peer-to-peer file sharing between devices",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

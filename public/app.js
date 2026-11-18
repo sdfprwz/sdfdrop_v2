@@ -29,6 +29,32 @@
   let clientId = localStorage.getItem('sdfdrop-client');
   if(!clientId){ clientId = uid(16); localStorage.setItem('sdfdrop-client', clientId); }
 
+  // ---------- device trust / block (local to this browser only) ----------
+  // Identity = a server-signed token derived from the peer's stable clientId
+  // and echoed in the peer list as `deviceId` — never the per-connection socket
+  // id, and never the raw clientId (so room members can't steal an identity).
+  // Trusted devices auto-accept files (no Accept tap); blocked ones are ignored.
+  // Stored in localStorage — no server database, no accounts. Trust is still a
+  // UX convenience, not a security boundary (see README).
+  const DEVICES_KEY='sdfdrop-devices';
+  let devices={};
+  try{ devices=JSON.parse(localStorage.getItem(DEVICES_KEY)||'{}')||{}; }catch{ devices={}; }
+  function saveDevices(){ try{ localStorage.setItem(DEVICES_KEY,JSON.stringify(devices)); }catch{} }
+  function peerRecord(p){ return (p&&p.deviceId&&devices[p.deviceId])||null; }
+  function peerTrusted(p){ const r=peerRecord(p); return !!(r&&r.trust); }
+  function peerBlocked(p){ const r=peerRecord(p); return !!(r&&r.block); }
+  function peerById(id){ return peers.find(p=>p.id===id)||null; }
+  function trustedSender(id){ return peerTrusted(peerById(id)); }
+  function blockedSender(id){ return peerBlocked(peerById(id)); }
+  function activePeers(){ return peers.filter(p=>!peerBlocked(p)); }
+  function updateDevice(cid,name,avatar,patch){
+    if(!cid)return;
+    const cur=devices[cid]||{name:name||'Device',avatar:avatar||'📦',addedAt:Date.now()};
+    const next=Object.assign({},cur,patch,{name:name||cur.name,avatar:avatar||cur.avatar});
+    if(!next.trust&&!next.block)delete devices[cid]; else devices[cid]=next;
+    saveDevices();
+  }
+
   // ---------- state ----------
   let ws=null, myId=null, peers=[], myRoom=null, iceServers=[{urls:'stun:stun.l.google.com:19302'}];
   let retryMs=1000, connectTimer=null, lastServerMsg=Date.now(), myNetGroup='…', watchdogTimer=null;
@@ -56,7 +82,7 @@
     statusPill.classList.toggle('online',online);statusPill.classList.toggle('offline',!online);
     statusText.textContent=txt;
     // keep radar pill honest (e.g. "offline — retrying…" instead of "searching")
-    if(!peers.length){
+    if(!activePeers().length){
       const et=$('#emptyText');
       if(et)et.textContent=txt==='online ✓'?'Searching for nearby devices…':txt;
     }
@@ -69,7 +95,7 @@
   // theme
   const themeBtn=$('#btnTheme');
   function applyTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem('sdfdrop-theme',t);themeBtn.textContent=t==='light'?'🌙':'☀️'}
-  applyTheme(localStorage.getItem('sdfdrop-theme') || (matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'));
+  applyTheme(localStorage.getItem('sdfdrop-theme') || 'dark');
   themeBtn.onclick=()=>applyTheme(document.documentElement.dataset.theme==='light'?'dark':'light');
 
   $('#btnEditName').onclick=()=>{
@@ -157,7 +183,7 @@
     if(connectTimer){clearTimeout(connectTimer);connectTimer=null;}
     await loadConfig();
     const url=getWsUrl();
-    try{connInfo.textContent=`sdfdrop • ${new URL(url.replace(/^ws/,'http')).host} • WebRTC P2P + relay`;}catch{connInfo.textContent='sdfdrop • WebRTC P2P + relay';}
+    connInfo.textContent='sdfdrop • fast, private file sharing';
     setStatus(false,'connecting…');
     manualClose=false;
     try{ws?.close()}catch{}
@@ -243,14 +269,14 @@
   }
 
   // ---------- rooms ----------
-  function roomPeerCount(){return peers.filter(p=>p.room===myRoom).length;}
+  function roomPeerCount(){return activePeers().filter(p=>p.room===myRoom).length;}
   function renderRoom(){
     const b=$('#roomBanner');
     if(myRoom){b.classList.remove('hidden');$('#roomCodeLabel').textContent=myRoom;
       $('#roomHint').textContent='devices with this code can see you';
       const rc=$('#roomCount');if(rc)rc.textContent=`• ${roomPeerCount()} in room`;
-      history.replaceState(null,'',location.pathname+'?room='+myRoom);
-    } else {b.classList.add('hidden');history.replaceState(null,'',location.pathname);}
+      history.replaceState(null,'',location.pathname+'?room='+myRoom+location.hash);
+    } else {b.classList.add('hidden');history.replaceState(null,'',location.pathname+location.hash);}
   }
   function joinRoom(code,silent){
     code=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,12);
@@ -321,7 +347,8 @@
   // ---------- peers radar (clean: no forced text, just pill + popup help) ----------
   function renderPeers(){
     peersLayer.innerHTML='';
-    const n=peers.length;
+    const list=activePeers(); // blocked devices stay hidden
+    const n=list.length;
     peerCount.textContent=n===0?'searching…':`${n} nearby`;
     const empty=$('#emptyState');
     if(empty)empty.style.display=n===0?'flex':'none';
@@ -330,23 +357,26 @@
       const online=statusPill.classList.contains('online');
       emptyText.textContent=online?'Searching for nearby devices…':statusText.textContent;
     }
-    peers.forEach((p,i)=>{
+    list.forEach((p,i)=>{
       const a=(i/n)*Math.PI*2-Math.PI/2;
       const x=50+Math.cos(a)*42, y=55+Math.sin(a)*40;
       const b=document.createElement('button');
-      b.className='peer '+(p.mode||'local');b.style.left=x+'%';b.style.top=y+'%';
+      b.className='peer '+(p.mode||'local')+(peerTrusted(p)?' trusted':'');
+      b.style.left=x+'%';b.style.top=y+'%';
       const col=/^#[0-9a-fA-F]{6}$/.test(p.color)?p.color:'#6366f1'; // defense-in-depth (server also validates)
-      b.innerHTML=`<span class="avatar" style="background:${col}33;border-color:${col}">${p.avatar}</span><span class="pname">${escapeHtml(p.name)}</span><span class="ptag">${p.mode==='room'?'🌐 '+(p.room||'room'):p.mode==='both'?'📶+🌐 wifi+room':'📶 wifi'}</span>`;
-      b.title=`Send to ${p.name}`;
+      const tag=p.mode==='room'?'🌐 '+(p.room||'room'):p.mode==='both'?'📶+🌐 wifi+room':'📶 wifi';
+      b.innerHTML=`<span class="avatar" style="background:${col}33;border-color:${col}">${p.avatar}</span><span class="pname">${escapeHtml(p.name)}</span><span class="ptag">${peerTrusted(p)?'🔐 ':''}${tag}</span>`;
+      b.title=`Send to ${p.name}${peerTrusted(p)?' (trusted — auto-accept)':''}`;
       b.onclick=()=>askAndSend(p);
       peersLayer.appendChild(b);
     });
     const rc=$('#roomCount');if(rc&&myRoom)rc.textContent=`• ${roomPeerCount()} in room`;
+    renderDeviceModal();
     updateDiag();
   }
   function updateDiag(){
     const el=$('#diagInfo');
-    const txt=`you ${myName} • net ${myNetGroup} • ${peers.length} nearby${myRoom?' • room '+myRoom:''}`;
+    const txt=`${myName} • ${activePeers().length} nearby${myRoom?' • room '+myRoom:''}`;
     if(el)el.textContent=txt;
     try{connInfo.title=txt;}catch{}
   }
@@ -357,39 +387,393 @@
   function openModal(s){$(s).classList.remove('hidden')}
   function closeModal(s){$(s).classList.add('hidden')}
   document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.add('hidden')}));
+  // Esc closes any open modal (checkboxes / inputs keep their state).
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape')return;
+    document.querySelectorAll('.modal:not(.hidden)').forEach(m=>{
+      if(m.id==='previewModal')stopPreview();
+      if(m.id==='sendModal'){clearSendPreview();sendFiles=null;sendIntent=null;}
+      m.classList.add('hidden');
+    });
+  });
+
+  // ---------- device manager (trust / block / remove) ----------
+  const _btnDevices=$('#btnDevices');if(_btnDevices)_btnDevices.onclick=()=>{renderDeviceModal();openModal('#devicesModal');};
+  const _btnCloseDevices=$('#btnCloseDevices');if(_btnCloseDevices)_btnCloseDevices.onclick=()=>closeModal('#devicesModal');
+  function deviceRow(d){
+    const col=/^#[0-9a-fA-F]{6}$/.test(d.color||'')?d.color:'#6366f1';
+    return `<div class="device-row">
+      <span class="device-avatar" style="background:${col}33;border-color:${col}">${escapeHtml(String(d.avatar||'📦').slice(0,4))}</span>
+      <span class="device-name"><strong>${escapeHtml(d.name||'Device')}</strong><small>${escapeHtml(d.sub||'')}</small></span>
+      <span class="device-actions">${d.actions||''}</span>
+    </div>`;
+  }
+  function deviceListHtml(list,emptyMsg){
+    return list.length?list.map(deviceRow).join(''):`<p class="muted small">${emptyMsg}</p>`;
+  }
+  function renderDeviceModal(){
+    const known=$('#deviceKnown'),saved=$('#deviceSaved');
+    if(!known||!saved)return;
+    // Show ALL peers here (incl. blocked) so a blocked device can be unblocked.
+    // Peers without a deviceId yet are mid-handshake (hello not processed) —
+    // skip them until the next peer-list update rather than offering a dead button.
+    const nearby=peers.filter(p=>p.deviceId).map(p=>{
+      const rec=peerRecord(p),trusted=!!(rec&&rec.trust),blocked=!!(rec&&rec.block);
+      const cid=escapeHtml(p.deviceId||'');
+      const nm=escapeHtml(p.name||'Device'),av=escapeHtml(p.avatar||'📦');
+      return{avatar:p.avatar,name:p.name,color:p.color,
+        sub:`${p.mode==='room'?'🌐 '+(p.room||'room'):p.mode==='both'?'📶+🌐 wifi+room':'📶 wifi'}${trusted?' • auto-accept ✓':''}${blocked?' • blocked':''}`,
+        actions:`<button class="btn small ${trusted?'primary':''}" data-dev-act="trust" data-cid="${cid}" data-name="${nm}" data-avatar="${av}">${trusted?'🔐 Trusted':'Trust'}</button>`+
+                `<button class="btn small ${blocked?'danger-ghost':''}" data-dev-act="block" data-cid="${cid}" data-name="${nm}" data-avatar="${av}">${blocked?'Unblock':'Block'}</button>`};
+    });
+    known.innerHTML=deviceListHtml(nearby,'No devices nearby yet — open sdfdrop on the other device first.');
+    const remembered=Object.entries(devices).map(([cid,rec])=>({avatar:rec.avatar,name:rec.name,color:undefined,
+      sub:`${rec.trust?'🔐 auto-accept':''}${rec.trust&&rec.block?' • ':''}${rec.block?'⛔ blocked':''}${!rec.trust&&!rec.block?'stored':''}`,
+      actions:(rec.trust?`<button class="btn small" data-dev-act="trust" data-cid="${escapeHtml(cid)}" data-name="${escapeHtml(rec.name||'Device')}" data-avatar="${escapeHtml(rec.avatar||'📦')}">Revoke trust</button>`:'')+
+              (rec.block?`<button class="btn small" data-dev-act="block" data-cid="${escapeHtml(cid)}" data-name="${escapeHtml(rec.name||'Device')}" data-avatar="${escapeHtml(rec.avatar||'📦')}">Unblock</button>`:'')+
+              `<button class="btn small danger-ghost" data-dev-act="remove" data-cid="${escapeHtml(cid)}">Remove</button>`}));
+    saved.innerHTML=deviceListHtml(remembered,'No saved devices. Trust or block a nearby device to add it here.');
+  }
+  function onDeviceAction(e){
+    const b=e.target.closest('button[data-dev-act]');if(!b)return;
+    const cid=b.dataset.cid;if(!cid)return;
+    const name=b.dataset.name||'Device',avatar=b.dataset.avatar||'📦';
+    const act=b.dataset.devAct;
+    if(act==='trust'){
+      const cur=devices[cid]||{};const trust=!cur.trust;
+      updateDevice(cid,name,avatar,{trust,block:trust?false:!!cur.block});
+      toast(trust?'Device trusted — files auto-accept ✓':'Trust removed — Accept taps back on','ok');
+    }else if(act==='block'){
+      const cur=devices[cid]||{};const block=!cur.block;
+      updateDevice(cid,name,avatar,{block,trust:block?false:!!cur.trust});
+      toast(block?'Device blocked — hidden & ignored ⛔':'Device unblocked','info');
+    }else if(act==='remove'){
+      delete devices[cid];saveDevices();toast('Device removed from this browser','info');
+    }
+    renderDeviceModal();renderPeers();
+  }
+  $('#deviceKnown')?.addEventListener('click',onDeviceAction);
+  $('#deviceSaved')?.addEventListener('click',onDeviceAction);
+
+  // ---------- file preview (images / video / audio / PDF / text) ----------
+  function previewKind(mime,name){
+    const m=String(mime||'').toLowerCase(),n=String(name||'').toLowerCase();
+    if(m.startsWith('image/'))return'image';
+    if(m.startsWith('video/'))return'video';
+    if(m.startsWith('audio/'))return'audio';
+    if(m==='application/pdf'||n.endsWith('.pdf'))return'pdf';
+    if(m.startsWith('text/')||/\.(txt|md|csv|json|js|css|html|htm|xml|log|ya?ml|ts|py|sh|ini)$/.test(n))return'text';
+    return null;
+  }
+  function pauseMedia(container){
+    if(!container)return;
+    for(const el of container.querySelectorAll('video,audio')){try{el.pause();el.removeAttribute('src');el.load?.();}catch{}}
+  }
+  function stopPreview(){const body=$('#previewBody');pauseMedia(body);if(body)body.innerHTML='';}
+  function pdfLinks(url,name){
+    const bar=document.createElement('div');bar.className='pdf-actions';
+    const open=document.createElement('a');open.className='btn small primary';open.textContent='Open PDF ↗';
+    open.href=url;open.target='_blank';open.rel='noopener';bar.appendChild(open);
+    const dl=document.createElement('a');dl.className='btn small';dl.textContent='Download ⬇';
+    dl.href=url;dl.download=name||'document.pdf';bar.appendChild(dl);
+    return bar;
+  }
+  async function renderPreview(container,url,mime,name){
+    if(!container||!url)return false;
+    const kind=previewKind(mime,name);if(!kind)return false;
+    pauseMedia(container);container.innerHTML='';
+    if(kind==='image'){
+      const img=document.createElement('img');img.src=url;img.alt=name||'Preview';container.appendChild(img);
+    }else if(kind==='video'){
+      const v=document.createElement('video');v.src=url;v.controls=true;v.playsInline=true;container.appendChild(v);
+    }else if(kind==='audio'){
+      const a=document.createElement('audio');a.src=url;a.controls=true;container.appendChild(a);
+    }else if(kind==='pdf'){
+      // Phone browsers generally refuse to display a blob: PDF inside an
+      // iframe (Chrome Android / iOS Safari show an error). Give them a
+      // tap-to-open / download path; desktop keeps the inline viewer plus
+      // the same buttons as a fallback.
+      const mobilePdf=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'')||
+        matchMedia('(pointer:coarse)').matches||Math.min(innerWidth,innerHeight)<=700;
+      if(mobilePdf){
+        const box=document.createElement('div');box.className='pdf-fallback';
+        const icon=document.createElement('div');icon.className='pdf-icon';icon.textContent='📄';box.appendChild(icon);
+        const strong=document.createElement('strong');strong.textContent=name||'PDF';box.appendChild(strong);
+        const p=document.createElement('p');p.className='muted small';
+        p.textContent='This browser can’t show PDFs inline. Open it or save it instead.';box.appendChild(p);
+        box.appendChild(pdfLinks(url,name));container.appendChild(box);
+      }else{
+        const wrap=document.createElement('div');wrap.className='pdf-embed';
+        const f=document.createElement('iframe');f.src=url;f.title=name||'PDF';wrap.appendChild(f);
+        wrap.appendChild(pdfLinks(url,name));container.appendChild(wrap);
+      }
+    }else{
+      const pre=document.createElement('pre');pre.textContent='Loading…';container.appendChild(pre);
+      try{const r=await fetch(url);pre.textContent=(await r.text()).slice(0,200000);}catch{pre.textContent='Could not read this file.';}
+    }
+    return true;
+  }
+  async function openPreview(url,mime,name){
+    if(!previewKind(mime,name)||!url)return;
+    const body=$('#previewBody');stopPreview();
+    $('#previewTitle').textContent=`👁 ${name||'Preview'}`;
+    await renderPreview(body,url,mime,name);
+    openModal('#previewModal');
+  }
+  const _btnClosePreview=$('#btnClosePreview');if(_btnClosePreview)_btnClosePreview.onclick=()=>{stopPreview();closeModal('#previewModal');};
+  $('#previewModal')?.addEventListener('click',e=>{if(e.target.id==='previewModal')stopPreview();});
+
+  // ---------- pre-send preview + confirm (nothing leaves until Send is tapped) ----------
+  let sendFiles=null,sendIntent=null,sendPreviewUrl=null;
+  function clearSendPreview(){
+    const box=$('#sendPreview');pauseMedia(box);
+    if(box){box.innerHTML='';box.classList.add('hidden');}
+    if(sendPreviewUrl){try{URL.revokeObjectURL(sendPreviewUrl)}catch{}sendPreviewUrl=null;}
+  }
+  function queueSend(files,intent){
+    if(!files||!files.length)return;
+    sendFiles=files;sendIntent=intent||{kind:'auto'};
+    renderSendModal();openModal('#sendModal');
+  }
+  function renderSendModal(){
+    clearSendPreview();
+    const intent=sendIntent||{kind:'auto'};
+    let dest='nearby devices';
+    if(intent.kind==='peer'&&intent.peer)dest=intent.peer.name;
+    else if(intent.kind==='room')dest=`Room ${intent.room}`;
+    else if(intent.kind==='all')dest='all nearby devices';
+    const total=sendFiles.reduce((n,f)=>n+(f.size||0),0);
+    $('#sendModalTitle').textContent=sendFiles.length===1?'📤 Ready to send':`📤 Ready to send ${sendFiles.length} files`;
+    $('#sendModalMeta').textContent=`To: ${dest} • ${fmtSize(total)}${sendFiles[0]?.isVirtualZip?' • folder ZIP':''}`;
+    $('#sendFileList').innerHTML=sendFiles.slice(0,12).map(f=>`<div><span>${escapeHtml(f.name||'file')}</span><span class="muted">${fmtSize(f.size)}</span></div>`).join('')+(sendFiles.length>12?`<div class="muted">…and ${sendFiles.length-12} more</div>`:'');
+    const f=sendFiles[0];
+    if(sendFiles.length===1&&f&&!f.isVirtualZip&&previewKind(f.type||'',f.name||'')){
+      try{
+        sendPreviewUrl=URL.createObjectURL(f);
+        const box=$('#sendPreview');box.classList.remove('hidden');
+        renderPreview(box,sendPreviewUrl,f.type||'',f.name||'');
+      }catch{}
+    }
+  }
+  const _btnCancelSend=$('#btnCancelSend');
+  if(_btnCancelSend)_btnCancelSend.onclick=()=>{clearSendPreview();sendFiles=null;sendIntent=null;closeModal('#sendModal');};
+  const _btnConfirmSend=$('#btnConfirmSend');
+  if(_btnConfirmSend)_btnConfirmSend.onclick=async()=>{
+    const files=sendFiles,intent=sendIntent||{kind:'auto'};
+    clearSendPreview();sendFiles=null;sendIntent=null;closeModal('#sendModal');
+    await executeSend(files,intent);
+  };
+  $('#sendModal')?.addEventListener('click',e=>{if(e.target.id==='sendModal'){clearSendPreview();sendFiles=null;sendIntent=null;}});
+
+  // ---------- streaming folder → ZIP (no library, no whole-folder buffering) ----------
+  // Presents a File-like object whose slice() synthesizes ZIP bytes on demand,
+  // so the existing P2P / relay / room pipeline works unchanged. Store method
+  // + data descriptors; CRC32 is computed as each chunk is read. No 4GB+ files.
+  const CRC_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}return t;})();
+  function crcUpdate(state,buf){const u=new Uint8Array(buf);let c=state.crc;for(let i=0;i<u.length;i++)c=CRC_TABLE[(c^u[i])&255]^(c>>>8);state.crc=c>>>0;}
+  function crcFinal(state){return(state.crc^0xFFFFFFFF)>>>0;}
+  const u16=(v)=>[v&255,(v>>8)&255];
+  const u32=(v)=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
+  function joinBytes(parts){let n=0;for(const p of parts)n+=p.length;const out=new Uint8Array(n);let o=0;for(const p of parts){out.set(p,o);o+=p.length;}return out;}
+  async function makeZipFile(entries,rootName){
+    const enc=new TextEncoder(),now=new Date();
+    const dosTime=((now.getHours()&31)<<11)|((now.getMinutes()&63)<<5)|((now.getSeconds()&31)>>1);
+    const dosDate=(((now.getFullYear()-1980)&127)<<9)|(((now.getMonth()+1)&15)<<5)|(now.getDate()&31);
+    const metas=entries.map(e=>{
+      const name=String(e.path||e.file.webkitRelativePath||e.file.name).replace(/\\/g,'/');
+      return{file:e.file,name,nameBytes:enc.encode(name),size:name.endsWith('/')?0:(e.file.size||0),isDir:name.endsWith('/'),crc:{crc:0xFFFFFFFF}};
+    });
+    let offset=0;
+    for(const m of metas){m.localOffset=offset;m.headerLen=30+m.nameBytes.length;offset+=m.headerLen+m.size+16;}
+    const centralStart=offset;
+    let centralLen=0;for(const m of metas)centralLen+=46+m.nameBytes.length;
+    const total=centralStart+centralLen+22;
+    if(total>0xFFFFFFF0)return null; // ZIP32 limit
+    const segs=[];
+    for(let i=0;i<metas.length;i++){
+      const m=metas[i],b=m.localOffset;
+      segs.push({start:b,len:m.headerLen,kind:'header',i});
+      if(m.size)segs.push({start:b+m.headerLen,len:m.size,kind:'data',i});
+      segs.push({start:b+m.headerLen+m.size,len:16,kind:'desc',i});
+    }
+    segs.push({start:centralStart,len:centralLen,kind:'central'});
+    segs.push({start:centralStart+centralLen,len:22,kind:'eocd'});
+    const FLAGS=0x0808; // bit 3 = data descriptor, bit 11 = UTF-8 names
+    const localHeader=(m)=>new Uint8Array([
+      ...u32(0x04034b50),...u16(20),...u16(FLAGS),...u16(0),...u16(dosTime),...u16(dosDate),
+      ...u32(0),...u32(0),...u32(0),...u16(m.nameBytes.length),...u16(0),...m.nameBytes
+    ]);
+    const descriptor=(m)=>new Uint8Array([...u32(0x08074b50),...u32(crcFinal(m.crc)),...u32(m.size),...u32(m.size)]);
+    const centralDir=()=>joinBytes(metas.map(m=>new Uint8Array([
+      ...u32(0x02014b50),...u16(20),...u16(20),...u16(FLAGS),...u16(0),...u16(dosTime),...u16(dosDate),
+      ...u32(crcFinal(m.crc)),...u32(m.size),...u32(m.size),
+      ...u16(m.nameBytes.length),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(m.isDir?0x00100000:0),...u32(m.localOffset),...m.nameBytes
+    ])));
+    const eocd=()=>new Uint8Array([
+      ...u32(0x06054b50),...u16(0),...u16(0),...u16(metas.length),...u16(metas.length),
+      ...u32(centralLen),...u32(centralStart),...u16(0)
+    ]);
+    async function buildRange(start,len){
+      const parts=[];
+      for(const seg of segs){
+        const from=Math.max(start,seg.start),to=Math.min(start+len,seg.start+seg.len);
+        if(to<=from)continue;
+        const rel=from-seg.start,take=to-from;
+        if(seg.kind==='data'){
+          const m=metas[seg.i],buf=await m.file.slice(rel,rel+take).arrayBuffer();
+          crcUpdate(m.crc,buf);parts.push(new Uint8Array(buf));
+        }else if(seg.kind==='header')parts.push(localHeader(metas[seg.i]).subarray(rel,rel+take));
+        else if(seg.kind==='desc')parts.push(descriptor(metas[seg.i]).subarray(rel,rel+take));
+        else if(seg.kind==='central')parts.push(centralDir().subarray(rel,rel+take));
+        else parts.push(eocd().subarray(rel,rel+take));
+      }
+      return joinBytes(parts).buffer;
+    }
+    // Build the whole archive once into a real Blob. The old on-demand slice
+    // generator was fragile across browsers/transports (0-byte downloads).
+    // ~4GB cap keeps memory bounded; normal classroom folders are far smaller.
+    const bytes=await buildRange(0,total);
+    const blob=new Blob([bytes],{type:'application/zip'});
+    return{
+      name:String(rootName||'folder').replace(/[^\w.\- ]+/g,'_').slice(0,60)+'.zip',
+      size:blob.size,type:'application/zip',isVirtualZip:true,
+      slice(start,end){return blob.slice(start,end);}
+    };
+  }
+  const EMPTY_FILE={size:0,slice(){return{arrayBuffer:async()=>new ArrayBuffer(0)}}};
+  async function entriesFromDrop(dt){
+    const items=[...(dt.items||[])].filter(i=>i.kind==='file');
+    if(items.length&&items[0].webkitGetAsEntry){
+      const out=[];
+      const walk=async(entry,prefix)=>{
+        if(!entry)return;
+        if(entry.isFile){
+          const f=await new Promise(res=>entry.file(res,()=>res(null)));
+          if(f)out.push({file:f,path:prefix+entry.name});
+        }else if(entry.isDirectory){
+          out.push({file:EMPTY_FILE,path:prefix+entry.name+'/'});
+          const reader=entry.createReader();let batch;
+          do{batch=await new Promise(res=>reader.readEntries(res,()=>res([])));
+            for(const child of batch)await walk(child,prefix+entry.name+'/');
+          }while(batch.length);
+        }
+      };
+      for(const it of items)await walk(it.webkitGetAsEntry(),'');
+      if(out.length)return out;
+    }
+    return [...(dt.files||[])].map(f=>({file:f,path:f.name}));
+  }
+  function folderRoot(entries){
+    for(const e of entries){const i=(e.path||'').indexOf('/');if(i>0)return e.path.slice(0,i);}
+    return'folder';
+  }
 
   // ---------- file picking ----------
-  let targetPeer=null, pendingRoomSend=false;
+  let targetPeer=null,sendIntentGlobal=null;
   const fileInput=$('#fileInput');
+  function destinationIntent(){
+    if($('#chkBroadcast').checked)return{kind:'all'};
+    if(targetPeer&&!peerBlocked(targetPeer))return{kind:'peer',peer:targetPeer};
+    const list=activePeers();
+    return list.length===1?{kind:'peer',peer:list[0]}:{kind:'auto'};
+  }
+  async function executeSend(files,intent){
+    if(!files||!files.length)return;
+    if(intent.kind==='room'){
+      if(!myRoom){toast('Join a room first 🔗','err');return;}
+      await sendRoomFiles(intent.room||myRoom,files);return;
+    }
+    if(intent.kind==='all'){await sendToAll(files);return;}
+    if(intent.kind==='peer'&&intent.peer){await sendFilesTo(intent.peer,files);return;}
+    const list=activePeers();
+    if(list.length===1){await sendFilesTo(list[0],files);return;}
+    if(list.length>1){await sendFilesTo(list[0],files);toast(`Sent to ${list[0].name} (tap another device to choose)`,'info');return;}
+    toast('No devices nearby yet','err');
+  }
+  async function readDirHandle(handle,root){
+    const out=[];
+    const walk=async(h,path)=>{
+      for await(const [name,child] of h.entries()){
+        const p=path+name;
+        if(child.kind==='directory'){out.push({file:EMPTY_FILE,path:p+'/'});await walk(child,p+'/');}
+        else if(child.kind==='file'){try{out.push({file:await child.getFile(),path:p});}catch{}}
+      }
+    };
+    await walk(handle,'');
+    for(const e of out)e.path=root+'/'+e.path;
+    return out;
+  }
+  async function pickFolderEntries(){
+    // Chromium desktop: true directory picker (works on PC, keeps empty dirs).
+    if(typeof window.showDirectoryPicker==='function'&&window.isSecureContext){
+      try{
+        const dir=await window.showDirectoryPicker();
+        const entries=await readDirHandle(dir,dir.name||'folder');
+        if(entries.length)return entries;
+      }catch(e){if(e&&e.name==='AbortError')return null;}
+    }
+    // Mobile / other browsers: multi-file picker + a folder name. webkitdirectory
+    // is too unreliable (often yields zero files), so it is not used here.
+    const files=await pickFiles();
+    if(!files||!files.length)return null;
+    const root=prompt('Folder name for these files:','SharedFolder');
+    if(root===null)return null;
+    const clean=String(root).trim().replace(/[\\/]/g,'')||'SharedFolder';
+    return files.map(f=>({file:f,path:clean+'/'+(f.webkitRelativePath||f.name)}));
+  }
+  async function queueFolder(intent){
+    const entries=await pickFolderEntries();
+    if(!entries){return;}
+    if(!entries.length){toast('No files found in that folder','err');return;}
+    const zip=await makeZipFile(entries,folderRoot(entries));
+    if(!zip||zip.size<=22){toast('No files found in that folder','err');return;}
+    queueSend([zip],intent);
+  }
+  const _btnSendFolder=$('#btnSendFolder');
+  if(_btnSendFolder)_btnSendFolder.onclick=()=>{
+    const list=activePeers();
+    if(!list.length){toast('No devices nearby — or use a Room','err');return;}
+    if(!(targetPeer&&!peerBlocked(targetPeer))){
+      if(list.length===1)targetPeer=list[0];
+      else{toast('Tap a device first, then send the folder 👆','info');return;}
+    }
+    queueFolder(destinationIntent());
+  };
+  const _btnSendRoomFolder=$('#btnSendRoomFolder');
+  if(_btnSendRoomFolder)_btnSendRoomFolder.onclick=()=>{
+    if(!myRoom){toast('Join a room first 🔗','err');openModal('#roomModal');return;}
+    if(!roomPeerCount()){toast('Nobody else in this room yet','err');return;}
+    queueFolder({kind:'room',room:myRoom});
+  };
   function askAndSend(peer){
     targetPeer=peer;
-    if($('#chkBroadcast').checked){sendToAll();return;}
     fileInput.click();
   }
   $('#btnSendRoom').onclick=()=>{
     if(!myRoom){toast('Join a room first 🔗','err');openModal('#roomModal');return;}
     if(!roomPeerCount()){toast('Nobody else in this room yet','err');return;}
-    pendingRoomSend=true;fileInput.click();
+    sendIntentGlobal={kind:'room',room:myRoom};fileInput.click();
   };
   $('#btnSendFiles').onclick=()=>{
-    if(peers.length===0){toast('No devices nearby — open sdfdrop on the other device first','err');openModal('#qrModal');$('#qrLink').textContent=roomLink();drawQR($('#qrCanvas'),roomLink());return;}
-    if(peers.length===1){targetPeer=peers[0];fileInput.click();}
-    else if($('#chkBroadcast').checked){sendToAll();}
+    const list=activePeers();
+    if(list.length===0){toast('No devices nearby — open sdfdrop on the other device first','err');openModal('#qrModal');$('#qrLink').textContent=roomLink();drawQR($('#qrCanvas'),roomLink());return;}
+    if(list.length===1){targetPeer=list[0];sendIntentGlobal=destinationIntent();fileInput.click();}
+    else if($('#chkBroadcast').checked){sendIntentGlobal={kind:'all'};fileInput.click();}
     else {toast('Tap a device to send to it 👆','info');}
   };
-  fileInput.onchange=async()=>{
+  fileInput.onchange=()=>{
     const files=[...fileInput.files];fileInput.value='';
-    if(!files.length){pendingRoomSend=false;return;}
-    if(pendingRoomSend){pendingRoomSend=false;if(myRoom)await sendRoomFiles(myRoom,files);return;}
-    if($('#chkBroadcast').checked||!targetPeer){await sendToAll(files);}
-    else await sendFilesTo(targetPeer,files);
+    if(!files.length)return;
+    queueSend(files,sendIntentGlobal||destinationIntent());
+    sendIntentGlobal=null;
   };
   async function sendToAll(files){
-    files=files||await pickFiles();
     if(!files?.length)return;
-    if(!peers.length){toast('Nobody to send to','err');return;}
-    toast(`Sending to ${peers.length} device(s)…`,'info');
-    for(const p of peers){sendFilesTo(p,files).catch(e=>toast(`Failed → ${p.name}: ${e.message}`,'err'));}
+    const list=activePeers();
+    if(!list.length){toast('Nobody to send to','err');return;}
+    toast(`Sending to ${list.length} device(s)…`,'info');
+    for(const p of list){sendFilesTo(p,files).catch(e=>toast(`Failed → ${p.name}: ${e.message}`,'err'));}
   }
   function pickFiles(){return new Promise(res=>{const i=document.createElement('input');i.type='file';i.multiple=true;i.onchange=()=>res([...i.files]);i.click();setTimeout(()=>res(null),60000);});}
 
@@ -429,7 +813,9 @@
         while(ws&&typeof ws.bufferedAmount==='number'&&ws.bufferedAmount>1024*1024){await new Promise(r=>setTimeout(r,20));}
       }
       send({type:'broadcast',room,data:{kind:'file-done',id}});
-      ui.done(null);broadcastWaits.delete(id);
+      ui.done(null);
+      if(!file.isVirtualZip){try{const u=URL.createObjectURL(file);trackBlobUrl(u);ui.setPreview(u,file.type||'',file.name);}catch{}}
+      broadcastWaits.delete(id);
       toast(`Broadcast ${file.name} → Room ${room} ✓`,'ok');
       const re=document.createElement('button');re.className='btn small';re.textContent='↻ Resend to room';re.style.marginTop='6px';
       re.onclick=()=>sendRoomFiles(room,[file]); // stragglers who accepted late
@@ -443,19 +829,25 @@
   // drag & drop anywhere
   ['dragover','drop'].forEach(ev=>window.addEventListener(ev,e=>{e.preventDefault();}));
   window.addEventListener('drop',async e=>{
+    const items=[...(e.dataTransfer.items||[])];
+    if(items.some(i=>i.kind==='file'&&i.webkitGetAsEntry&&i.webkitGetAsEntry()?.isDirectory)){
+      const entries=await entriesFromDrop(e.dataTransfer);
+      if(!entries.length){toast('No files found in that folder','err');return;}
+      const zip=await makeZipFile(entries,folderRoot(entries));
+      if(!zip||zip.size<=22){toast('No files found in that folder','err');return;}
+      queueSend([zip],destinationIntent());
+      return;
+    }
     const files=[...e.dataTransfer.files];
     if(!files.length)return;
-    if(peers.length===1)sendFilesTo(peers[0],files);
-    else if(targetPeer)sendFilesTo(targetPeer,files);
-    else if(peers.length>1){targetPeer=peers[0];sendFilesTo(peers[0],files);toast(`Sent to ${peers[0].name} (tap another device to choose)`, 'info');}
-    else toast('No devices nearby yet','err');
+    queueSend(files,destinationIntent());
   });
 
   // ---------- text ----------
   let textPeer=null;
-  function openText(peer){textPeer=peer||peers[0];$('#textTargetLabel').textContent=textPeer?`To: ${textPeer.name}`:'No devices nearby';$('#textInput').value='';const rb=$('#btnDoSendRoomText');if(rb)rb.style.display=myRoom?'':'none';openModal('#textModal');setTimeout(()=>$('#textInput').focus(),50);}
-  $('#btnText').onclick=()=>{if(!peers.length)return toast('No devices nearby','err');openText(peers[0]);};
-  $('#btnSendText2').onclick=()=>{if(!peers.length)return toast('No devices nearby','err');openText(targetPeer||peers[0]);};
+  function openText(peer){textPeer=peer||activePeers()[0];$('#textTargetLabel').textContent=textPeer?`To: ${textPeer.name}`:'No devices nearby';$('#textInput').value='';const rb=$('#btnDoSendRoomText');if(rb)rb.style.display=myRoom?'':'none';openModal('#textModal');setTimeout(()=>$('#textInput').focus(),50);}
+  $('#btnText').onclick=()=>{const l=activePeers();if(!l.length)return toast('No devices nearby','err');openText(l[0]);};
+  $('#btnSendText2').onclick=()=>{const l=activePeers();if(!l.length)return toast('No devices nearby','err');openText((targetPeer&&!peerBlocked(targetPeer))?targetPeer:l[0]);};
   $('#btnCloseText').onclick=()=>closeModal('#textModal');
   $('#btnDoSendRoomText').onclick=async()=>{
     const t=$('#textInput').value.trim();if(!t||!myRoom)return;
@@ -469,7 +861,8 @@
   $('#btnDoSendText').onclick=async()=>{
     const t=$('#textInput').value.trim();if(!t)return;
     closeModal('#textModal');
-    const dests=$('#chkBroadcast').checked?peers:(textPeer?[textPeer]:peers.slice(0,1));
+    const list=activePeers();
+    const dests=$('#chkBroadcast').checked?list:((textPeer&&!peerBlocked(textPeer))?[textPeer]:list.slice(0,1));
     for(const p of dests)await sendTextTo(p,t);
   };
 
@@ -679,11 +1072,12 @@
   // is identical on both sides, so they never offer at once (no glare).
   function warmConnections(){
     if(!myId)return;
-    const seen=new Set(peers.map(p=>p.id));
+    const list=activePeers();
+    const seen=new Set(list.map(p=>p.id));
     for(const [pid]of pcs){
       if(!seen.has(pid))destroyConn(pid);
     }
-    for(const p of peers){
+    for(const p of list){
       if(pcs.has(p.id))continue;
       if(myId<p.id){try{getConn(p.id,true);}catch{}}
     }
@@ -809,11 +1203,26 @@
     transfersEl.prepend(d);
     const bar=d.querySelector('progress'),st=d.querySelector('.st'),sp=d.querySelector('.sp'),act=d.querySelector('.t-act');
     const t0=Date.now();
+    let lastPaint=0,previewUrl='',previewMime='',previewName='';
     const ui={
       el:d, cancelled:false,
+      setPreview(url,mime,name){
+        if(!url||!previewKind(mime,name))return;
+        previewUrl=url;previewMime=mime||'';previewName=name||'';
+        const btn=document.createElement('button');btn.className='btn small';btn.textContent='👁 Preview';btn.style.marginTop='6px';
+        btn.onclick=()=>openPreview(previewUrl,previewMime,previewName);
+        act.appendChild(btn);
+      },
       update(recv){
-        const pct=size?Math.min(100,recv/size*100):100;bar.value=pct;
-        const dt=(Date.now()-t0)/1000,spd=dt>0.3?recv/dt:0;
+        const pct=size?Math.min(100,recv/size*100):100;
+        // Throttle DOM writes to ~12fps during bulk chunk streaming — large
+        // files emit tens of thousands of chunks and per-chunk layout thrash
+        // is a real CPU sink. Always paint the final 100%.
+        const now=Date.now();
+        if(pct<100&&now-lastPaint<80)return;
+        lastPaint=now;
+        bar.value=pct;
+        const dt=(now-t0)/1000,spd=dt>0.3?recv/dt:0;
         sp.textContent=`${pct.toFixed(0)}% • ${fmtSize(spd)}/s`;
       },
       done(link,label){
@@ -829,6 +1238,13 @@
     return ui;
   }
   function fmtSize(b){if(!b&&b!==0)return'—';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB';}
+  // Clearing only resets the visible list — active transfers keep running in
+  // the background (their UI refs simply detach from the DOM).
+  const _btnClear=$('#btnClearTransfers');
+  if(_btnClear)_btnClear.onclick=()=>{
+    transfersEl.innerHTML='<p class="muted">Nothing yet. Files you send &amp; receive show up here with speed + progress.</p>';
+    toast('Transfer list cleared','info');
+  };
 
   // ---------- sending ----------
   async function sendFilesTo(peer,files){
@@ -862,17 +1278,21 @@
       return;
     }
     // header + wait accept (sent ONLY on the locked P2P transport)
-    const accepted=new Promise((res,rej)=>{pendingAccept.set(id,{res,rej});setTimeout(()=>rej(new Error('declined/timeout')),90000);});
+    let acceptTimer=null;
+    const accepted=new Promise((res,rej)=>{pendingAccept.set(id,{res,rej});acceptTimer=setTimeout(()=>rej(new Error('declined/timeout')),90000);});
     try{
       dc.send(JSON.stringify({kind:'file-header',id,name:file.name,size:file.size,mime:file.type||'application/octet-stream'}));
     }catch{
+      clearTimeout(acceptTimer);
       ui.fail('P2P unavailable at start — retry to send');
       pendingAccept.delete(id);
       try{send({type:'relay',to:peer.id,data:{kind:'file-cancelled',id}});}catch{}
       return;
     }
-    toast(`Waiting for ${peer.name} to accept…`,'info');
-    try{await accepted;}catch{ui.fail('declined');pendingAccept.delete(id);return;}
+    if(peerTrusted(peer))toast(`Sending to trusted device ${peer.name} (auto-accept)…`,'info');
+    else toast(`Waiting for ${peer.name} to accept…`,'info');
+    try{await accepted;}catch{ui.fail('declined / timed out');pendingAccept.delete(id);return;}
+    finally{clearTimeout(acceptTimer);}
     pendingAccept.delete(id);
     if(ui.cancelled){sendTransferCancel(peer.id,id,'p2p');return;}
     // Stream 64KB messages with backpressure: only pause when >2MB is still
@@ -910,7 +1330,9 @@
       ui.fail('P2P dropped before finish — retry to send');
       return;
     }
-    ui.done(null);toast(`Sent ${file.name} → ${peer.name} ✓`,'ok');
+    ui.done(null);
+    if(!file.isVirtualZip){try{const u=URL.createObjectURL(file);trackBlobUrl(u);ui.setPreview(u,file.type||'',file.name);}catch{}}
+    toast(`Sent ${file.name} → ${peer.name} ✓`,'ok');
   }
   function waitForBuffer(dc){
     return new Promise((res)=>{
@@ -946,8 +1368,11 @@
     const header={kind:'file-header',id,name:file.name,size:file.size,mime:file.type||'application/octet-stream'};
     send({type:'relay',to:peer.id,data:header});
     toast(`P2P unavailable — relaying via server 🌐`,'info');
-    const accepted=new Promise((res,rej)=>{pendingAccept.set(id,{res,rej});setTimeout(()=>rej(new Error('declined/timeout')),90000);});
-    try{await accepted;}catch{ui.fail('declined');pendingAccept.delete(id);return;}
+    let acceptTimer=null;
+    const accepted=new Promise((res,rej)=>{pendingAccept.set(id,{res,rej});acceptTimer=setTimeout(()=>rej(new Error('declined/timeout')),90000);});
+    if(peerTrusted(peer))toast(`Sending to trusted device ${peer.name} (auto-accept)…`,'info');
+    try{await accepted;}catch{ui.fail('declined / timed out');pendingAccept.delete(id);return;}
+    finally{clearTimeout(acceptTimer);}
     pendingAccept.delete(id);
     if(ui.cancelled){sendTransferCancel(peer.id,id,'relay');return;}
     let seq=0; // RELAY_BIN_STEP → just under the server chunk cap
@@ -960,6 +1385,7 @@
     }
     send({type:'relay',to:peer.id,data:{kind:'file-done',id}});
     ui.done(null);
+    if(!file.isVirtualZip){try{const u=URL.createObjectURL(file);trackBlobUrl(u);ui.setPreview(u,file.type||'',file.name);}catch{}}
   }
   function b64encode(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=0x8000){s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));}return btoa(s);}
   function b64ToBytes(b64){const bin=atob(b64);const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u;}
@@ -967,7 +1393,8 @@
   // ---------- receiving ----------
   const recvQueue=[]; // pending headers
   function handlePacket(fromId,pkt,mode){
-    const peer=peers.find(p=>p.id===fromId)||{name:'device'};
+    if(blockedSender(fromId))return; // blocked device: ignore every packet
+    const peer=peerById(fromId)||{name:'device'};
     // Room broadcasts arrive as server fan-out: same handling as relay, room-tagged.
     // For P2P receptions, refine the label from our own selected ICE pair
     // (mirror of the sender's path): LAN vs Direct vs TURN.
@@ -981,7 +1408,14 @@
     if(pkt.kind==='file-header'){
       if(typeof pkt.size!=='number'||!(pkt.size>=0)||(!isP2PMode(tmode)&&pkt.size>RELAY_MAX_BYTES)){failIncoming(pkt.id,'file too large');return;}
       incoming.set(pkt.id,{meta:pkt,chunks:[],received:0,nextSeq:0,from:fromId,fromName:peer.name,mode:tmode,room:pkt.room||null,ui:null,accepted:false});
-      recvQueue.push(pkt.id);renderRecvModal();
+      if(trustedSender(fromId)){
+        // Trusted device → no Accept tap: acknowledge immediately and stream.
+        // Works for 1-to-1 P2P, relay and room broadcast alike.
+        acceptTransfer(pkt.id);
+        toast(`🔐 Auto-accepted ${pkt.name} from trusted device ${peer.name}`,'ok');
+      }else{
+        recvQueue.push(pkt.id);renderRecvModal();
+      }
       // Expire stale unaccepted transfers so dead senders can't leak memory
       setTimeout(()=>{
         const inc2=incoming.get(pkt.id);
@@ -1066,24 +1500,31 @@
     const id=recvQueue[0];
     const inc=incoming.get(id);if(!inc){recvQueue.shift();renderRecvModal();return;}
     $('#recvTitle').textContent=`${inc.room?'📢 Room '+inc.room+' • ':''}📥 Incoming from ${inc.fromName}`;
-    $('#recvMeta').textContent=`${inc.meta.name} • ${fmtSize(inc.meta.size)} • ${transferModeLabel(inc.mode)} • E2E encrypted 🔒`;
+    $('#recvMeta').textContent=`${inc.meta.name} • ${fmtSize(inc.meta.size)} • ${transferModeLabel(inc.mode)}`;
     $('#recvList').innerHTML=`<div>📄 <strong>${escapeHtml(inc.meta.name)}</strong> <span class="muted">${fmtSize(inc.meta.size)}</span></div>`;
     openModal('#recvModal');
     try{navigator.vibrate?.([100,50,100])}catch{}
   }
-  $('#btnAccept').onclick=()=>{
-    const id=recvQueue.shift();const inc=incoming.get(id);
-    if(!inc){renderRecvModal();return;}
+  // Shared by the Accept button and the trusted-device auto-accept path.
+  function acceptTransfer(id){
+    const inc=incoming.get(id);
+    if(!inc||inc.accepted||inc.done)return false;
     inc.accepted=true;
     inc.ui=addTransfer({id,name:inc.meta.name,size:inc.meta.size,peerName:inc.fromName,dir:'down',mode:inc.mode});
-    // tell sender via best path (room/relay transfers are server-mediated)
+    // Tell the sender over the same path the header arrived on.
     const c=pcs.get(inc.from);
     const msg=JSON.stringify({kind:'accept',id});
-    if(!isP2PMode(inc.mode))send({type:'relay',to:inc.from,data:{kind:'accept',id}});
-    else if(c?.dc?.readyState==='open')c.dc.send(msg);
-    else send({type:'relay',to:inc.from,data:{kind:'accept',id}});
-    // wake lock for large transfers
-    requestWakeLock();
+    let sent=false;
+    if(isP2PMode(inc.mode)&&c?.dc?.readyState==='open'){
+      try{c.dc.send(msg);sent=true;}catch{}
+    }
+    if(!sent)send({type:'relay',to:inc.from,data:{kind:'accept',id}});
+    requestWakeLock(); // keep screen on for large transfers
+    return true;
+  }
+  $('#btnAccept').onclick=()=>{
+    const id=recvQueue.shift();
+    if(!acceptTransfer(id)){renderRecvModal();return;}
     closeModal('#recvModal');
     if(recvQueue.length)renderRecvModal();
     toast('Receiving…','info');
@@ -1105,11 +1546,16 @@
     inc.chunks.length=0; // allow GC of parts once Blob takes over
     const url=URL.createObjectURL(blob);
     trackBlobUrl(url);
-    if(inc.ui)inc.ui.done({url,name:inc.meta.name},'Save file');
-    else {const ui=addTransfer({id,name:inc.meta.name,size:inc.meta.size,peerName:inc.fromName,dir:'down',mode:inc.mode});ui.done({url,name:inc.meta.name},'Save file');}
-    // auto-download (desktop) + keep link
+    const ui=inc.ui||addTransfer({id,name:inc.meta.name,size:inc.meta.size,peerName:inc.fromName,dir:'down',mode:inc.mode});
+    ui.done({url,name:inc.meta.name},'Save file');
+    ui.setPreview(url,inc.meta.mime,inc.meta.name);
+    // Auto-download on desktop. Mobile browsers block scripted blob downloads
+    // (especially auto-accepted ones), so show the explicit Save link instead.
+    const coarse=matchMedia('(pointer:coarse)').matches;
     const a=document.createElement('a');a.href=url;a.download=inc.meta.name;document.body.appendChild(a);
-    try{a.click()}catch{}setTimeout(()=>a.remove(),1000);
+    if(!coarse){try{a.click()}catch{}}
+    else toast(`Tap ⬇ Save file to download ${inc.meta.name}`,'info');
+    setTimeout(()=>a.remove(),1000);
     toast(`Received ${inc.meta.name} ✓`,'ok');
     incoming.delete(id);
     releaseWakeLock();
@@ -1121,7 +1567,7 @@
   function releaseWakeLock(){try{wakeLock?.release?.()}catch{}wakeLock=null;}
 
   // ---------- pwa ----------
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=15').catch(()=>{});});}
 
   // ---------- boot ----------
   // Room priority: ?room= URL > saved room > none. Saved room makes

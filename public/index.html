@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -8,7 +8,7 @@
 <link rel="canonical" href="/" id="canonicalLink" />
 <meta name="robots" content="index, follow, max-image-preview:large" />
 <meta name="author" content="SdfDrop" />
-<meta name="keywords" content="p2p file sharing, share files wifi, snapdrop alternative, pairdrop alternative, private file transfer, send files online" />
+<meta name="keywords" content="p2p file sharing, share files wifi, private file transfer, send files online" />
 <meta name="theme-color" content="#4f46e5" />
 <!-- Google Search Console ownership (URL-prefix property) -->
 <meta name="google-site-verification" content="2cIB-Vhu6J-TjYdec5wmuUsBlGQnHa0YVS9D2hGVOso" />
@@ -32,13 +32,14 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
 <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="styles.css?v=15" />
 <script type="application/ld+json" id="appLd">
 {"@context":"https://schema.org","@type":"WebApplication","name":"SdfDrop","url":"/","applicationCategory":"UtilitiesApplication","operatingSystem":"Any (Web browser)","offers":{"@type":"Offer","price":"0"},"description":"Fast, private peer-to-peer file sharing between devices. Same-WiFi auto-discovery and room codes for any network. No signup, no storage."}
 </script>
 <script src="hostmeta.js"></script>
 </head>
 <body>
+<div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
 <div class="landing" id="landing">
   <nav class="landing-nav">
     <a class="landing-brand" href="#landing" aria-label="SdfDrop home">
@@ -72,17 +73,25 @@
       </div>
 
       <div class="hero-visual" aria-label="Two devices transferring files directly">
+        <div class="hero-cursor" aria-hidden="true"></div>
         <div class="hero-glow"></div>
         <div class="transfer-orbit orbit-a"></div>
         <div class="transfer-orbit orbit-b"></div>
         <div class="transfer-dot dot-a"></div><div class="transfer-dot dot-b"></div><div class="transfer-dot dot-c"></div>
-        <img src="hero-illustration.png" alt="Illustration of two laptops transferring files" />
+        <div class="visual-parallax"><img src="hero-illustration.png" alt="Illustration of two laptops transferring files" /></div>
         <div class="transfer-badge"><span class="live-dot"></span> Direct transfer</div>
       </div>
     </section>
 
     <section class="trust-strip" aria-label="SdfDrop principles">
-      <span>🔒 End-to-end encrypted connections</span><span>•</span><span>☁️ Files aren't stored on a server</span><span>•</span><span>🌐 Works across networks with rooms</span>
+      <div class="trust-track">
+        <div class="trust-group">
+          <span>🔒 Private device-to-device transfers</span><i>•</i><span>☁️ Files aren't stored on a server</span><i>•</i><span>🌐 Works across networks with rooms</span><i>•</i>
+        </div>
+        <div class="trust-group" aria-hidden="true">
+          <span>🔒 Private device-to-device transfers</span><i>•</i><span>☁️ Files aren't stored on a server</span><i>•</i><span>🌐 Works across networks with rooms</span><i>•</i>
+        </div>
+      </div>
     </section>
 
     <section class="info-section" id="how-it-works">
@@ -125,9 +134,10 @@
     <span id="statusPill" class="pill offline"><span class="dot"></span><span id="statusText">connecting…</span></span>
     <button id="btnRoom" class="btn ghost" title="Join / create internet room">🔗 <span class="hide-sm">Room</span></button>
     <button id="btnQr" class="btn ghost" title="Show QR to connect">📷 <span class="hide-sm">QR</span></button>
-    <button id="btnHelp" class="btn ghost" title="How to connect / troubleshoot">❓</button>
-    <button id="btnText" class="btn ghost" title="Send text">✉️</button>
-    <button id="btnTheme" class="btn ghost" title="Toggle theme">🌙</button>
+    <button id="btnHelp" class="btn ghost" title="How to connect / troubleshoot" aria-label="Help">❓</button>
+    <button id="btnText" class="btn ghost" title="Send text" aria-label="Send text">✉️</button>
+    <button id="btnDevices" class="btn ghost" title="Trusted devices — auto-accept, block, remove" aria-label="Device settings">🔐 <span class="hide-sm">Devices</span></button>
+    <button id="btnTheme" class="btn ghost" title="Toggle theme" aria-label="Toggle theme">🌙</button>
   </div>
 </header>
 
@@ -136,6 +146,7 @@
   <span class="room-sub" id="roomHint">devices with this code can see you</span>
   <span class="room-sub" id="roomCount"></span>
   <button id="btnSendRoom" class="btn small primary">📢 Send to room</button>
+  <button id="btnSendRoomFolder" class="btn small">🗂️ Folder to room</button>
   <button id="btnCopyRoom" class="btn small">Copy link</button>
   <button id="btnLeaveRoom" class="btn small danger-ghost">Leave</button>
 </div>
@@ -148,12 +159,12 @@
         <div class="me-info">
           <div class="me-name-row">
             <strong id="meName">Loading…</strong>
-            <button id="btnEditName" class="icon-btn" title="Edit display name">✏️</button>
+            <button id="btnEditName" class="icon-btn" title="Edit display name" aria-label="Edit display name">✏️</button>
           </div>
-          <small id="meSub">discoverable on this WiFi • E2E encrypted 🔒</small>
+          <small id="meSub">discoverable on this WiFi • private 🔒</small>
         </div>
       </div>
-      <div class="radar-legend"><span id="peerCount">0 nearby</span> <button id="btnRescan" class="btn small ghost" title="Rescan for nearby devices">↻ Rescan</button></div>
+      <div class="radar-legend"><span id="peerCount">0 nearby</span> <button id="btnRescan" class="btn small ghost" title="Rescan for nearby devices" aria-label="Rescan">↻ Rescan</button></div>
     </div>
 
     <div id="radar" class="radar" aria-live="polite">
@@ -176,6 +187,7 @@
 
     <div class="send-bar">
       <button id="btnSendFiles" class="btn primary">📁 Send files</button>
+      <button id="btnSendFolder" class="btn">🗂️ Send folder</button>
       <button id="btnSendText2" class="btn">✉️ Send text</button>
       <label class="broadcast"><input type="checkbox" id="chkBroadcast" /> send to all nearby</label>
     </div>
@@ -184,23 +196,22 @@
 
   <aside class="side">
     <section class="card">
-      <h3>📦 Transfers</h3>
+      <h3>📦 Transfers <button id="btnClearTransfers" class="btn small ghost" title="Clear transfer list" aria-label="Clear transfer list">Clear</button></h3>
       <div id="transfers" class="transfers"><p class="muted">Nothing yet. Files you send &amp; receive show up here with speed + progress.</p></div>
     </section>
     <section class="card how">
       <h3>How it works</h3>
       <ul>
-        <li><strong>Same WiFi:</strong> auto-discovery. Nothing to type.</li>
-        <li><strong>Different network:</strong> Room code or QR → relay + WebRTC.</li>
-        <li><strong>Private:</strong> P2P first, TURN/relay fallback. Files never stored.</li>
+        <li><strong>Same WiFi:</strong> devices find each other automatically.</li>
+        <li><strong>Different network:</strong> use a room code or QR — works everywhere.</li>
+        <li><strong>Private:</strong> files go device-to-device and are never stored.</li>
       </ul>
-      <p class="muted small">Best of Snapdrop (simple) + PairDrop (rooms) + AirDrop (feel), under <strong>sdfdrop</strong> branding.</p>
     </section>
   </aside>
 </main>
 
 <footer class="foot">
-  <span id="connInfo">sdfdrop • WebRTC P2P • WS relay fallback • v1.0</span>
+  <span id="connInfo">sdfdrop • fast, private file sharing</span>
   <span class="foot-right"><span id="netBadge" class="pill tiny">P2P ready</span></span>
 </footer>
 </div>
@@ -215,7 +226,6 @@
       <li><strong>Tap a device</strong> on the radar to send files or text.</li>
     </ol>
     <p class="muted small">Not seeing each other? Check: same WiFi name (2.4 vs 5 GHz matters on some routers), VPN off, no “client isolation” on hotel WiFi. Then use a Room code — it works everywhere.</p>
-    <p class="diag small"><span class="muted">Diagnostics:</span> <code id="diagInfo">…</code></p>
     <div class="modal-actions">
       <button id="btnHelpRoom" class="btn primary">Join room 🔗</button>
       <button id="btnCloseHelp" class="btn ghost">Close</button>
@@ -280,10 +290,52 @@
   </div>
 </div>
 
+<!-- Pre-send preview + confirm -->
+<div id="sendModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card preview-card">
+    <h3 id="sendModalTitle">📤 Ready to send</h3>
+    <p id="sendModalMeta" class="muted small"></p>
+    <div id="sendPreview" class="preview-body hidden"></div>
+    <div id="sendFileList" class="send-file-list"></div>
+    <p class="muted small" style="margin:10px 0 0">Trusted devices skip the receiver's Accept tap — you still confirm what you send here.</p>
+    <div class="modal-actions">
+      <button id="btnCancelSend" class="btn ghost">Cancel</button>
+      <button id="btnConfirmSend" class="btn primary">Send ✓</button>
+    </div>
+  </div>
+</div>
+
+<!-- File preview (images / video / audio / PDF / text) -->
+<div id="previewModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card preview-card">
+    <h3 id="previewTitle">👁 Preview</h3>
+    <div id="previewBody" class="preview-body"></div>
+    <div class="modal-actions">
+      <button id="btnClosePreview" class="btn ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Device manager: trusted (auto-accept) / blocked / remove -->
+<div id="devicesModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card">
+    <h3>🔐 Device settings</h3>
+    <p class="muted small">Trusted devices send files straight through — no Accept tap. Blocked devices are hidden and ignored. Saved in this browser only.</p>
+    <h4>Nearby devices</h4>
+    <div id="deviceKnown" class="device-list"></div>
+    <h4>Saved devices</h4>
+    <div id="deviceSaved" class="device-list"></div>
+    <div class="modal-actions">
+      <button id="btnCloseDevices" class="btn ghost">Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="vendor/qrcode.min.js" defer></script>
-<script src="app.js"></script>
+<script src="app.js?v=15"></script>
+<script src="landing-motion.js?v=1"></script>
 <script src="landing.js"></script>
 </body>
 </html>

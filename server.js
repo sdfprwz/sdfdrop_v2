@@ -12,7 +12,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { WebSocketServer } = require('ws');
-const { randomUUID: uuidv4 } = require('crypto'); // built-in: no ESM-only uuid package
+const { randomUUID: uuidv4, createHmac } = require('crypto'); // built-in: no ESM-only uuid package
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_URL = process.env.PUBLIC_URL || '';
@@ -61,8 +61,8 @@ app.use((req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data: blob:; media-src blob: data:; connect-src 'self' wss: ws: https:; " +
-    "font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+    "img-src 'self' data: blob:; media-src blob: data:; connect-src 'self' blob: wss: ws: https:; " +
+    "font-src 'self' data:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
   );
   next();
 });
@@ -80,6 +80,21 @@ app.get('/config', (_req, res) => {
     maxRelayChunk: 64 * 1024,
     relayMaxBytes: RELAY_MAX_BYTES,
   });
+});
+// Digital Asset Links for the Trusted Web Activity APK. Android/Chrome uses
+// this to verify that our signed APK owns this origin, so the app opens without
+// a browser address bar and keeps WebRTC / WebSocket / download behaviour.
+const TWA_PACKAGE = process.env.TWA_PACKAGE || 'com.sdfprwz.sdfdrop';
+const TWA_FINGERPRINT = process.env.TWA_FINGERPRINT || 'C6:FD:BA:3A:98:15:20:D0:AE:E4:82:08:53:DA:75:11:DE:61:E6:3D:58:AB:A0:44:A2:C4:18:AB:6E:00:B5:34';
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+  res.type('application/json').json([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: {
+      namespace: 'android_app',
+      package_name: TWA_PACKAGE,
+      sha256_cert_fingerprints: [TWA_FINGERPRINT],
+    },
+  }]);
 });
 app.get('/stats', (req, res) => {
   // Detailed counts are gated: direct same-machine/LAN or ?token=ADMIN_TOKEN.
@@ -139,6 +154,16 @@ const SIGNAL_MAX_JSON = 20 * 1024;
 const RELAY_CHUNK_MAX = 100 * 1024; // base64 chars per chunk message
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+// Stable DEVICE identity for the client-side trust/block list. We never hand
+// another peer the raw clientId: we derive an HMAC token server-side, so a
+// malicious room member cannot read someone's id and claim it to inherit trust.
+// Stable across reconnects (same clientId -> same token). Override the key on
+// self-hosted deployments to keep tokens stable across server restarts.
+const DEVICE_TOKEN_KEY = process.env.DEVICE_TOKEN_KEY || 'sdfdrop-device-v1';
+function deviceToken(clientId) {
+  if (!clientId) return '';
+  return createHmac('sha256', DEVICE_TOKEN_KEY).update(clientId).digest('hex').slice(0, 24);
+}
 const PEER_ID_RE = /^[0-9a-f-]{8,36}$/i;
 const TRANSFER_ID_RE = /^[0-9a-f]{1,16}$/i;
 const RELAY_KINDS = new Set(['file-header', 'file-chunk', 'file-done', 'file-cancelled', 'text', 'accept', 'decline']);
@@ -335,6 +360,10 @@ function visiblePeersFor(peerId) {
     if (sameLocal || sharedRoom) {
       out.push({
         id: p.id,
+        // Server-signed stable device token (never the raw clientId) so peers
+        // can trust/block a DEVICE across reconnects and room changes, while
+        // room members cannot steal another device's identity to inherit trust.
+        deviceId: deviceToken(p.clientId),
         name: p.name,
         avatar: p.avatar,
         color: p.color,
@@ -475,7 +504,11 @@ wss.on('connection', (ws, req) => {
         if (typeof msg.name === 'string' && msg.name.trim()) peer.name = msg.name.trim().slice(0, 24);
         if (typeof msg.avatar === 'string' && msg.avatar) peer.avatar = [...msg.avatar].slice(0, 4).join('');
         if (typeof msg.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(msg.color)) peer.color = msg.color;
-        if (typeof msg.clientId === 'string') peer.clientId = msg.clientId.slice(0, 64);
+        // Stable device id used by the browser's local trust/block list.
+        // Constrain to hex so a peer cannot inject arbitrary markup/ids.
+        if (typeof msg.clientId === 'string' && /^[0-9a-f]{8,64}$/i.test(msg.clientId)) {
+          peer.clientId = msg.clientId.slice(0, 64);
+        }
         // Private-LAN subnet hint from WebRTC host candidates (same-WiFi
         // matching when public IPs differ). Re-sent periodically by client.
         if (typeof msg.lanSubnet === 'string') {
