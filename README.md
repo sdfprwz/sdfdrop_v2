@@ -99,6 +99,15 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 - Limit: 4 GB per folder (ZIP32 format). For bigger data, send files individually over same-WiFi P2P.
 - Code assets (`app.js`, `styles.css`) are now network-first in the service worker, so updates apply without a hard refresh.
 
+## Android APK (Trusted Web Activity)
+
+The APK is a thin signed wrapper that opens the hosted HTTPS site in Chrome. WebRTC, WebSocket signaling, file input, downloads, rooms and the PWA all run from the real hosted app.
+
+- Package: `com.sdfprwz.sdfdrop` · Host: `https://sdfdrop2.onrender.com`
+- Origin verification uses `/.well-known/assetlinks.json`, served by `server.js`. It contains the SHA-256 fingerprint of the APK signing certificate.
+- If you rebuild with a different keystore, set `TWA_FINGERPRINT` (and optionally `TWA_PACKAGE`) on the host so asset links still match.
+- The signing keystore is kept at `android/keystore.jks` locally and is git-ignored — **keep it safe**; you need it for every future update.
+
 ## Security model & limits
 
 - **Trust:** encryption is end-to-end only if you trust the signaling server (a malicious server could swap SDP offers). Self-host; don't trade sensitive files over random public instances.
