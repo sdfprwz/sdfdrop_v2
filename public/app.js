@@ -287,6 +287,7 @@
       const rc=$('#roomCount');if(rc)rc.textContent=`• ${roomPeerCount()} in room`;
       history.replaceState(null,'',location.pathname+'?room='+myRoom+location.hash);
     } else {b.classList.add('hidden');history.replaceState(null,'',location.pathname+location.hash);}
+    renderQuickChat();
   }
   function joinRoom(code,silent){
     code=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,12);
@@ -384,6 +385,7 @@
     renderDeviceModal();
     updateDiag();
     if(!$('#chatPanel').classList.contains('hidden'))renderChat();
+    renderQuickChat();
   }
   function updateDiag(){
     const el=$('#diagInfo');
@@ -858,7 +860,7 @@
   const CHAT_KEY='sdfdrop-chats';
   let chats={};
   try{chats=JSON.parse(localStorage.getItem(CHAT_KEY)||'{}')||{};}catch{chats={};}
-  let chatKey=null,chatUnread=0,typingUntil={},typingTimer=null,typingSent=0;
+  let chatKey=null,chatUnread=0,lastUnreadKey=null,typingUntil={},typingTimer=null,typingSent=0;
   function saveChats(){try{localStorage.setItem(CHAT_KEY,JSON.stringify(chats));}catch{}}
   function peerKey(p){return'p:'+((p&&p.deviceId)||(p&&p.id)||'unknown');}
   function roomKey(code){return'r:'+code;}
@@ -918,13 +920,17 @@
     if(c.messages.length>200)c.messages.splice(0,c.messages.length-200);
     saveChats();
     if(!$('#chatPanel').classList.contains('hidden')&&key===chatKey)renderChat();
-    else{chatUnread++;updateChatUnread();}
+    else{chatUnread++;lastUnreadKey=key;updateChatUnread();}
+    renderQuickChat();
   }
   function openChat(target){
     const panel=$('#chatPanel');if(!panel)return;
     if(target){if(typeof target==='string')chatKey=target;else chatKey=peerKey(target);}
-    if(!chatKey){const t=chatTargets();chatKey=t.length?t[0].key:null;}
-    chatUnread=0;updateChatUnread();
+    if(!chatKey){
+      const t=chatTargets();
+      chatKey=(lastUnreadKey&&t.some(x=>x.key===lastUnreadKey))?lastUnreadKey:(t.length?t[0].key:null);
+    }
+    lastUnreadKey=null;chatUnread=0;updateChatUnread();
     $('#chatBackdrop').classList.remove('hidden');panel.classList.remove('hidden');
     renderChat();setTimeout(()=>$('#chatInput').focus(),60);
   }
@@ -963,23 +969,58 @@
     if($('#chatInput').value.trim()&&now-typingSent>1500){typingSent=now;sendTyping(true);}
   });
   $('#chatInput').addEventListener('blur',()=>sendTyping(false));
+  async function dispatchText(key,text){
+    if(!text||!key)return false;
+    if(text.length>8192){toast('Message too long (8KB max)','err');return false;}
+    if(key.startsWith('r:')){
+      const room=key.slice(2),id=uid(6);
+      send({type:'broadcast',room,data:{kind:'text',id,text}});
+      appendChat(key,{id,text,dir:'out',name:'You',room:true});
+      return true;
+    }
+    const peer=activePeers().find(p=>peerKey(p)===key);
+    if(!peer){toast('That device is offline','err');return false;}
+    await sendTextTo(peer,text);
+    return true;
+  }
+  function renderQuickChat(){
+    const sel=$('#chatQuickTarget'),preview=$('#chatPreview');
+    if(!sel||!preview)return;
+    const targets=chatTargets(),prev=sel.value;
+    sel.innerHTML=targets.map(t=>`<option value="${escapeHtml(t.key)}">${escapeHtml(t.label)}</option>`).join('')||'<option value="">No devices</option>';
+    if(targets.some(t=>t.key===prev))sel.value=prev;
+    const key=sel.value||chatKey;
+    const c=key&&chats[key]&&chats[key].messages.length?chats[key].messages[chats[key].messages.length-1]:null;
+    preview.innerHTML=c?`<strong>${c.dir==='out'?'You':escapeHtml(c.name||chatTitle(key))}:</strong> ${escapeHtml(c.text).slice(0,160)}`:'<span class="muted">No messages yet — say hello 👋</span>';
+  }
+  $('#btnChatOpen').onclick=()=>openChat();
   $('#chatForm').onsubmit=async(e)=>{
     e.preventDefault();
     const input=$('#chatInput'),text=input.value.trim();
     if(!text)return;
-    if(text.length>8192){toast('Message too long (8KB max)','err');return;}
     input.value='';growChatInput();sendTyping(false);
     if(!chatKey){toast('No conversation selected','err');return;}
-    if(chatKey.startsWith('r:')){
-      const room=chatKey.slice(2),id=uid(6);
-      send({type:'broadcast',room,data:{kind:'text',id,text}});
-      appendChat(chatKey,{id,text,dir:'out',name:'You',room:true});
-      return;
-    }
-    const peer=activePeers().find(p=>peerKey(p)===chatKey);
-    if(!peer){toast('That device is offline','err');return;}
-    await sendTextTo(peer,text);
+    await dispatchText(chatKey,text);
   };
+  $('#chatQuickForm').onsubmit=async(e)=>{
+    e.preventDefault();
+    const input=$('#chatQuickInput'),text=input.value.trim();
+    if(!text)return;
+    if(await dispatchText($('#chatQuickTarget').value,text)){input.value='';renderQuickChat();}
+  };
+  function quickIntent(){
+    const key=$('#chatQuickTarget').value;
+    if(key&&key.startsWith('r:'))return{kind:'room',room:key.slice(2)};
+    const p=activePeers().find(x=>peerKey(x)===key);
+    if(p){targetPeer=p;return{kind:'peer',peer:p};}
+    return destinationIntent();
+  }
+  $('#btnChatQuickFile').onclick=()=>{
+    const it=quickIntent();
+    if(it.kind==='room')sendIntentGlobal=it;
+    fileInput.click();
+  };
+  $('#btnChatQuickFolder').onclick=()=>{queueFolder(quickIntent());};
 
   // ---------- WebRTC (P2P strongly preferred; WS relay is last fallback) ----------
   function rtcConfig(){return{iceServers,sdpSemantics:'unified-plan'};}
@@ -1685,7 +1726,7 @@
   function releaseWakeLock(){try{wakeLock?.release?.()}catch{}wakeLock=null;}
 
   // ---------- pwa ----------
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=18').catch(()=>{});});}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=19').catch(()=>{});});}
 
   // ---------- boot ----------
   // Room priority: ?room= URL > saved room > none. Saved room makes

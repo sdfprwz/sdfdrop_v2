@@ -164,6 +164,19 @@ body{
 .chat-compose-actions .tiny{margin-right:auto;font-size:10px}
 .chat-unread{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;margin-left:4px;border-radius:999px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;line-height:1}
 @media(max-width:560px){.chat-panel{width:100vw}.chat-log{padding:12px}}
+
+/* inline chat card in the sidebar */
+.chat-card h3 .btn{margin-left:auto}
+.chat-quick-target{width:100%;padding:8px 10px;border-radius:10px;border:1px solid var(--card-border);background:rgba(0,0,0,.2);color:inherit;font-size:12px}
+[data-theme="light"] .chat-quick-target{background:#f1f2fb}
+.chat-preview{min-height:46px;max-height:74px;overflow:hidden;margin:9px 0;padding:9px 10px;border-radius:11px;background:rgba(0,0,0,.14);font-size:12px;line-height:1.45;color:var(--muted)}
+[data-theme="light"] .chat-preview{background:#f6f7ff}
+.chat-preview strong{color:var(--text)}
+.chat-quick-form{display:flex;gap:7px}
+.chat-quick-form input{flex:1;min-width:0;padding:9px 10px;border-radius:10px;border:1px solid var(--card-border);background:rgba(0,0,0,.22);color:inherit;font-size:13px}
+[data-theme="light"] .chat-quick-form input{background:#fff}
+.chat-quick-actions{display:flex;gap:7px;margin-top:8px}
+.chat-quick-actions .btn{flex:1}
 #devicesModal h4{margin:14px 0 6px;font-size:13px;color:var(--muted);letter-spacing:.4px;text-transform:uppercase}
 .device-list{display:flex;flex-direction:column;gap:8px;max-height:230px;overflow-y:auto}
 .device-row{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--card-border);border-radius:12px;background:rgba(0,0,0,.14)}

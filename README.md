@@ -102,7 +102,8 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 
 ## Messages
 
-- ✉️ opens a **Messages** panel with one conversation per device (plus the current room). The conversation selector lists nearby devices, the active room, and saved conversations.
+- The sidebar **💬 Chat** card replaces the old "How it works" blurb: pick a recipient, send a quick message, or jump straight into **Send file / Send folder** for that recipient. It also previews the last message.
+- ✉️ opens the full **Messages** panel with one conversation per device (plus the current room). The conversation selector lists nearby devices, the active room, and saved conversations.
 - Messages appear as bubbles with timestamps; outgoing messages use the brand gradient. Tap a bubble to copy it. **Clear** wipes only the current conversation.
 - History is saved locally in `localStorage['sdfdrop-chats']` (200 messages per conversation) — no server storage.
 - An **unread badge** appears on ✉️ when a message arrives while the panel is closed.

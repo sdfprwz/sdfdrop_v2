@@ -32,7 +32,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
 <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
-<link rel="stylesheet" href="styles.css?v=18" />
+<link rel="stylesheet" href="styles.css?v=19" />
 <script type="application/ld+json" id="appLd">
 {"@context":"https://schema.org","@type":"WebApplication","name":"SdfDrop","url":"/","applicationCategory":"UtilitiesApplication","operatingSystem":"Any (Web browser)","offers":{"@type":"Offer","price":"0"},"description":"Fast, private peer-to-peer file sharing between devices. Same-WiFi auto-discovery and room codes for any network. No signup, no storage."}
 </script>
@@ -199,13 +199,18 @@
       <h3>📦 Transfers <button id="btnClearTransfers" class="btn small ghost" title="Clear transfer list" aria-label="Clear transfer list">Clear</button></h3>
       <div id="transfers" class="transfers"><p class="muted">Nothing yet. Files you send &amp; receive show up here with speed + progress.</p></div>
     </section>
-    <section class="card how">
-      <h3>How it works</h3>
-      <ul>
-        <li><strong>Same WiFi:</strong> devices find each other automatically.</li>
-        <li><strong>Different network:</strong> use a room code or QR — works everywhere.</li>
-        <li><strong>Private:</strong> files go device-to-device and are never stored.</li>
-      </ul>
+    <section class="card chat-card">
+      <h3>💬 Chat <button id="btnChatOpen" class="btn small ghost" title="Open full messages panel">Open ↗</button></h3>
+      <select id="chatQuickTarget" class="chat-quick-target" aria-label="Chat recipient"></select>
+      <div id="chatPreview" class="chat-preview"></div>
+      <form id="chatQuickForm" class="chat-quick-form">
+        <input id="chatQuickInput" maxlength="8192" placeholder="Quick message…" aria-label="Quick message" />
+        <button id="btnChatQuickSend" class="btn small primary" type="submit">Send</button>
+      </form>
+      <div class="chat-quick-actions">
+        <button id="btnChatQuickFile" class="btn small">📁 Send file</button>
+        <button id="btnChatQuickFolder" class="btn small">🗂️ Send folder</button>
+      </div>
     </section>
   </aside>
 </main>
@@ -343,7 +348,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="vendor/qrcode.min.js" defer></script>
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 <script src="landing-motion.js?v=1"></script>
 <script src="landing.js"></script>
 </body>
