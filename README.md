@@ -107,6 +107,9 @@ The APK is a thin signed wrapper that opens the hosted HTTPS site in Chrome. Web
 - Origin verification uses `/.well-known/assetlinks.json`, served by `server.js`. It contains the SHA-256 fingerprint of the APK signing certificate.
 - If you rebuild with a different keystore, set `TWA_FINGERPRINT` (and optionally `TWA_PACKAGE`) on the host so asset links still match.
 - The signing keystore is kept at `android/keystore.jks` locally and is git-ignored — **keep it safe**; you need it for every future update.
+- Built artifacts: `android/SdfDrop-v1.0.0-release.apk` (sideload) and `android/SdfDrop-v1.0.0-release.aab` (Play Store). Both are git-ignored.
+- Install the APK on Android 7+ with Chrome: enable **Install unknown apps** for your file manager/browser, open the APK, then launch **SdfDrop**. Or use `adb install android/SdfDrop-v1.0.0-release.apk`.
+- The APK certificate SHA-256 is `c6fdba3a981520d0aee4820853da7511de61e63d58aba044a2c418ab6e00b534` — it must match the `assetlinks.json` served by the host for the app to open in fullscreen TWA mode.
 
 ## Security model & limits
 

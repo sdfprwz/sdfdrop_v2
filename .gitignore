@@ -3,3 +3,5 @@ npm-debug.log
 .env
 .DS_Store
 android/keystore.jks
+android/*.apk
+android/*.aab
