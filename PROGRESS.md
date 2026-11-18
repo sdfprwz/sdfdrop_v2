@@ -20,7 +20,8 @@ This file is the hand-over record for all work done on the project. It is safe t
 | 2026-11-18 | Trusted devices / block / remove + pre-send preview + folder ZIP + robustness/docs | done, pushed `117fd83` |
 | 2026-11-18 | TWA/APK documentation + Digital Asset Links route | done, pushed `135a253` |
 | 2026-11-18 | Signed release APK + AAB built; install notes | done, pushed `01067a0` |
-| 2026-11-18 | This progress report + local credential backup | done, uncommitted at time of writing |
+| 2026-11-18 | This progress report + local credential backup | done, pushed `0e3b043` |
+| 2026-11-18 | Duplicate radar entries fix (multiple tabs/devices showing several times) | done, pushed in final commit |
 
 All feature development happened on 2026-11-18 in this working directory.
 
@@ -84,10 +85,10 @@ All feature development happened on 2026-11-18 in this working directory.
 - On phones, scripted blob downloads are skipped; receiver taps ⬇ **Save file**.
 
 ### 2.9 Service worker / cache strategy — `public/sw.js`
-- Cache name bumped repeatedly (`v8` → `v15`) as changes shipped.
+- Cache name bumped repeatedly (`v8` → `v16`) as changes shipped.
 - JS/CSS/manifest are now **network-first** so updates apply without a hard refresh; other assets remain cache-first.
 - Added `landing-motion.js` to precache assets.
-- Asset URLs in `index.html` and the SW registration use `?v=15` query strings for hard cache busting.
+- Asset URLs in `index.html` and the SW registration use `?v=16` query strings for hard cache busting.
 - A stale service worker was the root cause of "preview never appears" reports — fixed permanently.
 
 ### 2.10 Deployment — GitHub + Render
@@ -95,7 +96,14 @@ All feature development happened on 2026-11-18 in this working directory.
 - Render auto-deployed; verified hosted `app.js` now contains trusted devices, folder ZIP, PDF fallback, and the landing-motion script.
 - Added `GET /.well-known/assetlinks.json` to `server.js` (Express static ignores dotfiles, so an explicit route was required). Env overrides: `TWA_PACKAGE`, `TWA_FINGERPRINT`.
 
-### 2.11 Android APK (Trusted Web Activity)
+### 2.11 Duplicate radar entries fix — `server.js`, `public/app.js`
+- **Problem:** one physical device appeared several times and filled the radar when several tabs/windows were open.
+- **Root cause:** the server creates one peer per WebSocket connection, so multiple tabs from the same browser profile became multiple "devices"; the client also never collapsed them.
+- **Server:** `visiblePeersFor()` now skips closing sockets, skips peers with the same `clientId` as the viewer (other tabs of the same browser), and de-duplicates by the signed `deviceId` token as a defensive measure.
+- **Client:** `activePeers()` de-duplicates by `deviceId` too, so every call site (radar, counts, sends, text targets, connection warm-up) sees one entry per device.
+- **Verified:** with an isolated server, 3 tabs in browser profile A + 1 tab in profile B → A sees exactly 1 peer and B sees exactly 1 peer.
+
+### 2.12 Android APK (Trusted Web Activity)
 - Built with Bubblewrap CLI 1.27.0 + JDK 17 + Android SDK (platform 35/36, build-tools 35), using the generated Gradle project at `C:\Users\sdfpe\AppData\Local\Temp\opencode\twaproject`.
 - Package `com.sdfprwz.sdfdrop`, version `1.0.0` (code 1), minSdk 24, targetSdk 36, label **SdfDrop**, launch URL `https://sdfdrop2.onrender.com/`.
 - Signed release APK and AAB are in `android/` (see §5).
@@ -116,6 +124,7 @@ All feature development happened on 2026-11-18 in this working directory.
 | Folder sent to wrong device | Folder button cleared selected peer when >1 device visible | Preserve selected peer; ask user to tap one otherwise |
 | Phone download failed | Browser blocks scripted blob downloads on touch devices | Skip auto-click; show explicit Save link |
 | `#app` deep link showed landing | Room URL cleanup stripped the hash | Preserve `location.hash` in `replaceState` |
+| Same device shown multiple times on radar | One WebSocket per tab; every connection became a separate peer | Skip same-`clientId` peers and dedupe by signed `deviceId` on server + client |
 | Gradle build failed | `minSdkVersion 21` < library requirement 24; wrong `--manifest`/cwd usage | Set minSdk 24; run build from project dir with file manifest |
 
 ---
@@ -151,6 +160,7 @@ All feature development happened on 2026-11-18 in this working directory.
 ## 6. Git history (this work)
 
 ```
+7acd9cf 2026-11-18  Deduplicate radar peers by stable device identity
 01067a0 2026-11-18  Add APK build artifacts and install notes
 135a253 2026-11-18  Document TWA APK signing and asset-links configuration
 117fd83 2026-11-18  Add trusted devices, previews, folders, dynamic landing, and TWA asset links

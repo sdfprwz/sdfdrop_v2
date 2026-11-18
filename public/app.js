@@ -46,7 +46,17 @@
   function peerById(id){ return peers.find(p=>p.id===id)||null; }
   function trustedSender(id){ return peerTrusted(peerById(id)); }
   function blockedSender(id){ return peerBlocked(peerById(id)); }
-  function activePeers(){ return peers.filter(p=>!peerBlocked(p)); }
+  function activePeers(){
+    // One radar entry per physical device: a browser with several tabs opens
+    // several sockets, but they all share a deviceId. Keep the first one.
+    const seen=new Set();
+    return peers.filter(p=>{
+      if(peerBlocked(p))return false;
+      const key=p.deviceId||p.id;
+      if(seen.has(key))return false;
+      seen.add(key);return true;
+    });
+  }
   function updateDevice(cid,name,avatar,patch){
     if(!cid)return;
     const cur=devices[cid]||{name:name||'Device',avatar:avatar||'📦',addedAt:Date.now()};
@@ -1567,7 +1577,7 @@
   function releaseWakeLock(){try{wakeLock?.release?.()}catch{}wakeLock=null;}
 
   // ---------- pwa ----------
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=15').catch(()=>{});});}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=16').catch(()=>{});});}
 
   // ---------- boot ----------
   // Room priority: ?room= URL > saved room > none. Saved room makes

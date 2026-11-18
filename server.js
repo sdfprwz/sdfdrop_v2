@@ -350,8 +350,16 @@ function visiblePeersFor(peerId) {
   const me = peers.get(peerId);
   if (!me) return [];
   const out = [];
+  const seenDevices = new Set();
   for (const [id, p] of peers) {
     if (id === peerId) continue;
+    if (p.ws.readyState !== 1) continue; // closing/ghost connection
+    // Other tabs / windows of the SAME browser share a clientId. They are one
+    // physical device, not multiple peers — hide them from the radar.
+    if (p.clientId && me.clientId && p.clientId === me.clientId) continue;
+    const devId = deviceToken(p.clientId);
+    if (devId && seenDevices.has(devId)) continue; // defensive: one entry per device
+    if (devId) seenDevices.add(devId);
     const sameLocal = isSameNetwork(p, me);
     let sharedRoom = null;
     for (const r of me.rooms) {
