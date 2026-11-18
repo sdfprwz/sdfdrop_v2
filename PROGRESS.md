@@ -24,7 +24,8 @@ This file is the hand-over record for all work done on the project. It is safe t
 | 2026-11-18 | Duplicate radar entries fix (multiple tabs/devices showing several times) | done, pushed `eb1f188` |
 | 2026-11-18 | Professional Messages/chat panel (history, bubbles, unread, typing, room) | done, pushed `33dc4da` |
 | 2026-11-18 | Sidebar inline Chat card replaces "How it works"; quick message + file/folder | done, pushed `3209604` |
-| 2026-11-18 | Chat UX polish: chips, drafts, date separators, smart scroll, in-chat attachments | done, final commit |
+| 2026-11-18 | Chat UX polish: chips, drafts, date separators, smart scroll, in-chat attachments | done, pushed `a3d3aad` |
+| 2026-11-18 | First-visit guided website/app tour | done, final commit |
 
 All feature development happened on 2026-11-18 in this working directory.
 
@@ -88,10 +89,10 @@ All feature development happened on 2026-11-18 in this working directory.
 - On phones, scripted blob downloads are skipped; receiver taps ⬇ **Save file**.
 
 ### 2.9 Service worker / cache strategy — `public/sw.js`
-- Cache name bumped repeatedly (`v8` → `v20`) as changes shipped.
+- Cache name bumped repeatedly (`v8` → `v21`) as changes shipped.
 - JS/CSS/manifest are now **network-first** so updates apply without a hard refresh; other assets remain cache-first.
 - Added `landing-motion.js` to precache assets.
-- Asset URLs in `index.html` and the SW registration use `?v=20` query strings for hard cache busting.
+- Asset URLs in `index.html` and the SW registration use `?v=21` query strings for hard cache busting.
 - A stale service worker was the root cause of "preview never appears" reports — fixed permanently.
 
 ### 2.10 Deployment — GitHub + Render
@@ -105,6 +106,12 @@ All feature development happened on 2026-11-18 in this working directory.
 - **Server:** `visiblePeersFor()` now skips closing sockets, skips peers with the same `clientId` as the viewer (other tabs of the same browser), and de-duplicates by the signed `deviceId` token as a defensive measure.
 - **Client:** `activePeers()` de-duplicates by `deviceId` too, so every call site (radar, counts, sends, text targets, connection warm-up) sees one entry per device.
 - **Verified:** with an isolated server, 3 tabs in browser profile A + 1 tab in profile B → A sees exactly 1 peer and B sees exactly 1 peer.
+
+### 2.16 First-visit tour — `public/tour.js` (new), `public/index.html`, `public/styles.css`, `public/sw.js`
+- Added a 5-step spotlight tour: radar → rooms → trusted devices → sending → messages.
+- Overlay with highlighted target, tooltip card, Next/Back/Skip; Enter advances, Esc skips. Completion stored in `localStorage['sdfdrop-tour-v1']`.
+- Starts automatically on first app open (landing CTA or `#app`), replayable from ❓ Help → **Take tour**.
+- Verified in Chrome: tour appears on first open, finishes and sets the flag, and replays from Help with no JS exceptions.
 
 ### 2.15 Chat UX polish — `public/app.js`, `public/index.html`, `public/styles.css`
 - Conversation switching now uses horizontally scrollable avatar chips with unread dots (replaces the panel `<select>`); the sidebar quick selector remains.
@@ -181,6 +188,7 @@ All feature development happened on 2026-11-18 in this working directory.
 ## 6. Git history (this work)
 
 ```
+fc71afb 2026-11-18  Add first-visit guided tour
 c26f72a 2026-11-18  Polish chat UX with chips, drafts, dates, and attachments
 e555c51 2026-11-18  Replace How it works card with inline chat card
 0e334c9 2026-11-18  Add professional messages chat panel with history and typing

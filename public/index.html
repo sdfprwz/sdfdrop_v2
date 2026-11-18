@@ -32,7 +32,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
 <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
-<link rel="stylesheet" href="styles.css?v=20" />
+<link rel="stylesheet" href="styles.css?v=21" />
 <script type="application/ld+json" id="appLd">
 {"@context":"https://schema.org","@type":"WebApplication","name":"SdfDrop","url":"/","applicationCategory":"UtilitiesApplication","operatingSystem":"Any (Web browser)","offers":{"@type":"Offer","price":"0"},"description":"Fast, private peer-to-peer file sharing between devices. Same-WiFi auto-discovery and room codes for any network. No signup, no storage."}
 </script>
@@ -233,6 +233,7 @@
     <p class="muted small">Not seeing each other? Check: same WiFi name (2.4 vs 5 GHz matters on some routers), VPN off, no “client isolation” on hotel WiFi. Then use a Room code — it works everywhere.</p>
     <div class="modal-actions">
       <button id="btnHelpRoom" class="btn primary">Join room 🔗</button>
+      <button id="btnTour" class="btn">Take tour</button>
       <button id="btnCloseHelp" class="btn ghost">Close</button>
     </div>
   </div>
@@ -349,9 +350,24 @@
 
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
+<div id="tourOverlay" class="tour-overlay hidden" role="dialog" aria-modal="true" aria-label="SdfDrop tour">
+  <div id="tourSpot" class="tour-spot"></div>
+  <div id="tourTip" class="tour-tip">
+    <div id="tourStep" class="tour-step"></div>
+    <h3 id="tourTitle"></h3>
+    <p id="tourText"></p>
+    <div class="tour-actions">
+      <button id="btnTourSkip" class="btn small ghost">Skip</button>
+      <button id="btnTourBack" class="btn small">Back</button>
+      <button id="btnTourNext" class="btn small primary">Next</button>
+    </div>
+  </div>
+</div>
+
 <script src="vendor/qrcode.min.js" defer></script>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 <script src="landing-motion.js?v=1"></script>
 <script src="landing.js"></script>
+<script src="tour.js?v=1"></script>
 </body>
 </html>

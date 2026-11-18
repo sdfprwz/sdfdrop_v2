@@ -1772,7 +1772,7 @@
   function releaseWakeLock(){try{wakeLock?.release?.()}catch{}wakeLock=null;}
 
   // ---------- pwa ----------
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=20').catch(()=>{});});}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=21').catch(()=>{});});}
 
   // ---------- boot ----------
   // Room priority: ?room= URL > saved room > none. Saved room makes

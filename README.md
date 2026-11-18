@@ -10,6 +10,7 @@ Fast browser-to-browser file + text sharing. Same-WiFi discovery, room codes for
 - **Preview & confirm:** picking a file opens a **preview + Send/Cancel** dialog first (images, video, audio, PDF, text) — nothing is transferred until you confirm. Completed transfers also keep a 👁 Preview button.
 - **Folders:** 🗂️ **Send folder** uses the browser's real directory picker (or a multi-file + folder-name fallback on mobile), packs a ZIP on the fly, then asks you to confirm before sending. Drag & drop of a folder works too.
 - **Messages:** a proper 💬 chat panel with per-device conversations, saved history, unread badge, typing indicator, and room announcements — no more plain text box.
+- **First-visit tour:** a short guided spotlight tour of the app on first open, skippable and replayable from ❓ Help.
 - **Fast:** 64KB DataChannel chunks with proper backpressure, larger relay chunks, streaming receive (no base64 concat), progress + speed, screen WakeLock for big transfers.
 - **PWA:** installable, dark/light themes, responsive phone → desktop UI.
 
@@ -99,6 +100,12 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 - On phones, scripted blob downloads are blocked by the browser, so the receiver must tap **⬇ Save file**; desktop still auto-downloads.
 - Limit: 4 GB per folder (ZIP32 format). For bigger data, send files individually over same-WiFi P2P.
 - Code assets (`app.js`, `styles.css`) are now network-first in the service worker, so updates apply without a hard refresh.
+
+## First-visit tour
+
+- On first open, a short spotlight tour highlights the radar, rooms, trusted devices, sending, and messages.
+- Use **Next / Back / Skip** or the keyboard (Enter → next, Esc → skip). Progress is remembered in localStorage, so it only appears once.
+- Replay any time from ❓ **Help → Take tour**.
 
 ## Messages
 
