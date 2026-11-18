@@ -1,0 +1,23 @@
+name: Keep Render awake
+
+# Render's free tier sleeps after ~15 minutes of inactivity. A ping every
+# 10 minutes keeps the service warm. GitHub cron is best-effort and may be
+# delayed a few minutes under load, which is fine for this purpose.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping sdfdrop health endpoint
+        run: |
+          url="${SDFDROP_URL:-https://sdfdrop2.onrender.com/health}"
+          code=$(curl -s -o /tmp/sdfdrop-health -w '%{http_code}' --max-time 20 "$url")
+          echo "HTTP $code at $(date -u +%FT%TZ)"
+          cat /tmp/sdfdrop-health 2>/dev/null || true
+          test "$code" = "200"
+        env:
+          SDFDROP_URL: https://sdfdrop2.onrender.com/health

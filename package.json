@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "keepalive": "node keep-alive.js"
   },
   "engines": {
     "node": ">=22.23.4"

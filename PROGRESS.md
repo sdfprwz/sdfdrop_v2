@@ -25,7 +25,8 @@ This file is the hand-over record for all work done on the project. It is safe t
 | 2026-11-18 | Professional Messages/chat panel (history, bubbles, unread, typing, room) | done, pushed `33dc4da` |
 | 2026-11-18 | Sidebar inline Chat card replaces "How it works"; quick message + file/folder | done, pushed `3209604` |
 | 2026-11-18 | Chat UX polish: chips, drafts, date separators, smart scroll, in-chat attachments | done, pushed `a3d3aad` |
-| 2026-11-18 | First-visit guided website/app tour | done, final commit |
+| 2026-11-18 | First-visit guided website/app tour | done, pushed `189586c` |
+| 2026-11-18 | Keep-alive program + GitHub Actions cron for Render free tier | done, final commit |
 
 All feature development happened on 2026-11-18 in this working directory.
 
@@ -106,6 +107,11 @@ All feature development happened on 2026-11-18 in this working directory.
 - **Server:** `visiblePeersFor()` now skips closing sockets, skips peers with the same `clientId` as the viewer (other tabs of the same browser), and de-duplicates by the signed `deviceId` token as a defensive measure.
 - **Client:** `activePeers()` de-duplicates by `deviceId` too, so every call site (radar, counts, sends, text targets, connection warm-up) sees one entry per device.
 - **Verified:** with an isolated server, 3 tabs in browser profile A + 1 tab in profile B → A sees exactly 1 peer and B sees exactly 1 peer.
+
+### 2.17 Keep-alive for Render — `keep-alive.js` (new), `.github/workflows/keep-alive.yml` (new), `package.json`
+- Standalone dependency-free Node program pings `/health` every 10 minutes (configurable via `SDFDROP_URL` / `SDFDROP_PING_MS`), with `--once` mode for Task Scheduler/cron and 15 s timeout.
+- Added a GitHub Actions workflow with a 10-minute cron as a cloud alternative so the user's PC does not need to stay on.
+- Verified one-shot mode against both local and hosted endpoints (HTTP 200).
 
 ### 2.16 First-visit tour — `public/tour.js` (new), `public/index.html`, `public/styles.css`, `public/sw.js`
 - Added a 5-step spotlight tour: radar → rooms → trusted devices → sending → messages.
@@ -188,6 +194,7 @@ All feature development happened on 2026-11-18 in this working directory.
 ## 6. Git history (this work)
 
 ```
+7a2689f 2026-11-18  Add keep-alive program and GitHub cron for Render
 fc71afb 2026-11-18  Add first-visit guided tour
 c26f72a 2026-11-18  Polish chat UX with chips, drafts, dates, and attachments
 e555c51 2026-11-18  Replace How it works card with inline chat card

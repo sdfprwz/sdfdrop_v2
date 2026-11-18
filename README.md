@@ -120,6 +120,15 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 - **Enter** sends, **Shift+Enter** adds a line; the counter shows the 8 KB limit. Room conversations get a 📢 Room button in the composer.
 - Texts still travel P2P first with relay fallback; room announcements use the existing room broadcast. They no longer create duplicate entries in the Transfers list.
 
+## Keeping Render awake
+
+Render's free tier spins a service down after roughly 15 minutes of inactivity; the next request then waits ~30 s for a cold start. Two ways to prevent that:
+
+- **Cloud cron (recommended):** `.github/workflows/keep-alive.yml` pings `/health` every 10 minutes from GitHub Actions. It needs no local machine. Make sure Actions are enabled for the repo; you can also trigger it manually from the Actions tab.
+- **Local program:** `npm run keepalive` runs `keep-alive.js` continuously (10-minute interval). For Task Scheduler / cron, run `node keep-alive.js --once` every 10 minutes instead.
+
+Configure with `SDFDROP_URL` (default `https://sdfdrop2.onrender.com/health`) and `SDFDROP_PING_MS` (default `600000`, minimum `60000`). The program only issues a `GET /health`; it stores no data. Pings greatly reduce cold starts but Render may still restart services periodically.
+
 ## Android APK (Trusted Web Activity)
 
 The APK is a thin signed wrapper that opens the hosted HTTPS site in Chrome. WebRTC, WebSocket signaling, file input, downloads, rooms and the PWA all run from the real hosted app.
