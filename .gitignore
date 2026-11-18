@@ -3,5 +3,6 @@ npm-debug.log
 .env
 .DS_Store
 android/keystore.jks
+android/keystore-credentials.txt
 android/*.apk
 android/*.aab
