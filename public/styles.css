@@ -177,6 +177,19 @@ body{
 [data-theme="light"] .chat-quick-form input{background:#fff}
 .chat-quick-actions{display:flex;gap:7px;margin-top:8px}
 .chat-quick-actions .btn{flex:1}
+
+/* chat polish */
+.chat-conversations{display:flex;gap:6px;overflow-x:auto;flex:1;min-width:0;padding-bottom:2px;scrollbar-width:thin}
+.chat-chip{position:relative;display:flex;align-items:center;gap:6px;flex:0 0 auto;padding:6px 9px;border-radius:999px;border:1px solid var(--card-border);background:rgba(255,255,255,.05);color:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+[data-theme="light"] .chat-chip{background:#f1f2fb}
+.chat-chip.active{border-color:var(--primary);background:rgba(79,70,229,.22)}
+.chat-chip .dot{width:7px;height:7px;border-radius:50%;background:#ef4444}
+.chat-date{text-align:center;font-size:10px;color:var(--muted);margin:6px 0;position:relative}
+.chat-date::before,.chat-date::after{content:'';position:absolute;top:50%;width:28%;height:1px;background:var(--card-border)}
+.chat-date::before{left:0}.chat-date::after{right:0}
+.msg.compact{margin-top:-4px}
+.msg.compact .meta{display:none}
+.chat-compose-actions .icon-only{padding:6px 8px;font-size:14px}
 #devicesModal h4{margin:14px 0 6px;font-size:13px;color:var(--muted);letter-spacing:.4px;text-transform:uppercase}
 .device-list{display:flex;flex-direction:column;gap:8px;max-height:230px;overflow-y:auto}
 .device-row{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--card-border);border-radius:12px;background:rgba(0,0,0,.14)}

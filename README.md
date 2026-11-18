@@ -104,7 +104,9 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 
 - The sidebar **💬 Chat** card replaces the old "How it works" blurb: pick a recipient, send a quick message, or jump straight into **Send file / Send folder** for that recipient. It also previews the last message.
 - ✉️ opens the full **Messages** panel with one conversation per device (plus the current room). The conversation selector lists nearby devices, the active room, and saved conversations.
-- Messages appear as bubbles with timestamps; outgoing messages use the brand gradient. Tap a bubble to copy it. **Clear** wipes only the current conversation.
+- Switch conversations with the avatar chips at the top (with unread dots), or use the sidebar selector. Messages appear as bubbles with **date separators** and grouped consecutive messages; outgoing messages use the brand gradient. Tap a bubble to copy it. **Clear** wipes only the current conversation.
+- Drafts are saved per conversation (survive closing/reopening the panel). Scrolling stays put when old messages arrive; Esc closes the panel and returns focus.
+- The composer has 📎 / 🗂️ buttons to send a file or folder directly to the active conversation.
 - History is saved locally in `localStorage['sdfdrop-chats']` (200 messages per conversation) — no server storage.
 - An **unread badge** appears on ✉️ when a message arrives while the panel is closed.
 - A lightweight **typing indicator** is sent over the existing signaling channel (throttled, no new server endpoint).

@@ -32,7 +32,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
 <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
-<link rel="stylesheet" href="styles.css?v=19" />
+<link rel="stylesheet" href="styles.css?v=20" />
 <script type="application/ld+json" id="appLd">
 {"@context":"https://schema.org","@type":"WebApplication","name":"SdfDrop","url":"/","applicationCategory":"UtilitiesApplication","operatingSystem":"Any (Web browser)","offers":{"@type":"Offer","price":"0"},"description":"Fast, private peer-to-peer file sharing between devices. Same-WiFi auto-discovery and room codes for any network. No signup, no storage."}
 </script>
@@ -289,7 +289,7 @@
     <button id="btnCloseChat" class="icon-btn" title="Close messages" aria-label="Close messages">✕</button>
   </div>
   <div class="chat-toolbar">
-    <select id="chatTarget" aria-label="Conversation"></select>
+    <div id="chatConversations" class="chat-conversations" aria-label="Conversations"></div>
     <button id="btnChatClear" class="btn small ghost" title="Clear this conversation">Clear</button>
   </div>
   <div id="chatLog" class="chat-log" role="log" aria-live="polite"></div>
@@ -298,7 +298,9 @@
     <textarea id="chatInput" rows="1" maxlength="8192" placeholder="Write a message… (Enter to send)" aria-label="Message"></textarea>
     <div class="chat-compose-actions">
       <span id="chatCount" class="muted tiny"></span>
-      <button id="btnChatRoom" class="btn small hidden" type="button" title="Announce to the room">📢 Room</button>
+      <button id="btnChatAttachFile" class="btn small icon-only" type="button" title="Send a file here" aria-label="Send a file here">📎</button>
+      <button id="btnChatAttachFolder" class="btn small icon-only" type="button" title="Send a folder here" aria-label="Send a folder here">🗂️</button>
+      <button id="btnChatRoom" class="btn small hidden" type="button" title="Announce to the room">📢</button>
       <button id="btnChatSend" class="btn small primary" type="submit">Send ➤</button>
     </div>
   </form>
@@ -348,7 +350,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="vendor/qrcode.min.js" defer></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 <script src="landing-motion.js?v=1"></script>
 <script src="landing.js"></script>
 </body>

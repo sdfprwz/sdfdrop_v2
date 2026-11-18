@@ -403,6 +403,8 @@
   // Esc closes any open modal (checkboxes / inputs keep their state).
   document.addEventListener('keydown',e=>{
     if(e.key!=='Escape')return;
+    const panel=$('#chatPanel');
+    if(panel&&!panel.classList.contains('hidden')){closeChat();return;}
     document.querySelectorAll('.modal:not(.hidden)').forEach(m=>{
       if(m.id==='previewModal')stopPreview();
       if(m.id==='sendModal'){clearSendPreview();sendFiles=null;sendIntent=null;}
@@ -860,7 +862,11 @@
   const CHAT_KEY='sdfdrop-chats';
   let chats={};
   try{chats=JSON.parse(localStorage.getItem(CHAT_KEY)||'{}')||{};}catch{chats={};}
-  let chatKey=null,chatUnread=0,lastUnreadKey=null,typingUntil={},typingTimer=null,typingSent=0;
+  const DRAFT_KEY='sdfdrop-chat-drafts';
+  let chatDrafts={};try{chatDrafts=JSON.parse(localStorage.getItem(DRAFT_KEY)||'{}')||{};}catch{}
+  function saveDrafts(){try{localStorage.setItem(DRAFT_KEY,JSON.stringify(chatDrafts));}catch{}}
+  let chatKey=null,renderedChatKey=null,lastUnreadKey=null,unreadByKey={},chatReturnFocus=null;
+  let typingUntil={},typingTimer=null,typingSent=0;
   function saveChats(){try{localStorage.setItem(CHAT_KEY,JSON.stringify(chats));}catch{}}
   function peerKey(p){return'p:'+((p&&p.deviceId)||(p&&p.id)||'unknown');}
   function roomKey(code){return'r:'+code;}
@@ -877,41 +883,74 @@
     const out=[],seen=new Set();
     for(const p of activePeers()){
       const k=peerKey(p);if(seen.has(k))continue;seen.add(k);
-      out.push({key:k,label:`${p.avatar||'💬'} ${p.name}${peerTrusted(p)?' 🔐':''}`});
+      out.push({key:k,avatar:p.avatar||'💬',name:p.name+(peerTrusted(p)?' 🔐':''),
+        label:`${p.avatar||'💬'} ${p.name}${peerTrusted(p)?' 🔐':''}`});
     }
-    if(myRoom){const k=roomKey(myRoom);if(!seen.has(k))out.push({key:k,label:`📢 Room ${myRoom}`});}
+    if(myRoom){const k=roomKey(myRoom);if(!seen.has(k))out.push({key:k,avatar:'📢',name:'Room '+myRoom,label:`📢 Room ${myRoom}`});}
     for(const k of Object.keys(chats)){
       if(seen.has(k))continue;seen.add(k);
-      out.push({key:k,label:`${chats[k].avatar||'💬'} ${chats[k].name||'Device'}`});
+      out.push({key:k,avatar:chats[k].avatar||'💬',name:chats[k].name||'Device',
+        label:`${chats[k].avatar||'💬'} ${chats[k].name||'Device'}`});
     }
     return out;
   }
-  function renderChat(){
+  function dayLabel(ts){
+    const d=new Date(ts),today=new Date();
+    const same=(a,b)=>a.toDateString()===b.toDateString();
+    const y=new Date(today);y.setDate(y.getDate()-1);
+    if(same(d,today))return'Today';
+    if(same(d,y))return'Yesterday';
+    return d.toLocaleDateString([], {month:'short',day:'numeric',year:d.getFullYear()!==today.getFullYear()?'numeric':undefined});
+  }
+  function renderChat(scroll){
     const panel=$('#chatPanel');if(!panel||panel.classList.contains('hidden'))return;
     const targets=chatTargets();
     if(!chatKey||!targets.some(t=>t.key===chatKey))chatKey=targets.length?targets[0].key:null;
-    const sel=$('#chatTarget');
-    sel.innerHTML=targets.map(t=>`<option value="${escapeHtml(t.key)}"${t.key===chatKey?' selected':''}>${escapeHtml(t.label)}</option>`).join('')||'<option>No conversations</option>';
+    const wrap=$('#chatConversations');
+    wrap.innerHTML=targets.map(t=>{
+      const u=unreadByKey[t.key]||0;
+      return `<button class="chat-chip${t.key===chatKey?' active':''}" data-key="${escapeHtml(t.key)}" title="${escapeHtml(t.name)}">${escapeHtml(t.avatar)}<span>${escapeHtml(t.name)}</span>${u?'<i class="dot"></i>':''}</button>`;
+    }).join('')||'<span class="muted small" style="padding:6px">No conversations yet</span>';
+    // keep per-conversation drafts when switching threads
+    const input=$('#chatInput');
+    if(renderedChatKey&&renderedChatKey!==chatKey)chatDrafts[renderedChatKey]=input.value;
+    if(renderedChatKey!==chatKey){input.value=chatDrafts[chatKey]||'';saveDrafts();renderedChatKey=chatKey;growChatInput();}
     const c=chatKey?chats[chatKey]:null,log=$('#chatLog');
+    const nearBottom=log.scrollHeight-log.scrollTop-log.clientHeight<80;
     if(!c||!c.messages.length){log.innerHTML='<div class="chat-empty">No messages yet.<br>Say hello 👋</div>';}
     else{
-      log.innerHTML=c.messages.map(m=>{
+      let html='',lastDay='',lastFrom='',lastTs=0;
+      for(const m of c.messages){
+        const day=dayLabel(m.ts);
+        if(day!==lastDay){html+=`<div class="chat-date">${escapeHtml(day)}</div>`;lastDay=day;}
+        const from=m.dir==='out'?'You':(m.name||chatTitle(chatKey));
+        const compact=from===lastFrom&&m.ts-lastTs<4*60*1000;
         const room=m.room?'<span class="tag">📢 ROOM</span>':'';
-        const who=m.dir==='out'?'You':(m.name||chatTitle(chatKey));
+        const who=m.dir==='out'?'You':escapeHtml(from);
         const time=new Date(m.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-        return `<div class="msg ${m.dir}${m.room?' room':''}">${room}<div class="bubble" data-copy="${escapeHtml(m.text)}">${escapeHtml(m.text)}</div><div class="meta">${escapeHtml(who)} • ${time}</div></div>`;
-      }).join('');
-      log.scrollTop=log.scrollHeight;
+        html+=`<div class="msg ${m.dir}${m.room?' room':''}${compact?' compact':''}">${room}<div class="bubble" title="Tap to copy" data-copy="${escapeHtml(m.text)}">${escapeHtml(m.text)}</div><div class="meta">${who} • ${time}</div></div>`;
+        lastFrom=from;lastTs=m.ts;
+      }
+      log.innerHTML=html;
     }
+    if(scroll!==false||nearBottom)log.scrollTop=log.scrollHeight;
     const online=chatKey&&chatKey.startsWith('p:')?activePeers().some(p=>peerKey(p)===chatKey):false;
     $('#chatStatus').textContent=!chatKey?'No devices nearby':chatKey.startsWith('r:')?`${roomPeerCount()} in this room`:online?'Online':'Offline — messages send when they return';
     const typing=chatKey&&typingUntil[chatKey]>Date.now();
     const tEl=$('#chatTyping');tEl.textContent=typing?`${chatTitle(chatKey)} is typing…`:'';
     tEl.classList.toggle('hidden',!typing);
     $('#btnChatRoom')?.classList.toggle('hidden',!chatKey||!chatKey.startsWith('r:'));
-    $('#chatCount').textContent=`${($('#chatInput').value||'').length}/8192`;
+    $('#chatCount').textContent=`${(input.value||'').length}/8192`;
   }
-  function updateChatUnread(){const b=$('#chatUnread');b.textContent=chatUnread>99?'99+':chatUnread;b.classList.toggle('hidden',!chatUnread);}
+  function updateChatUnread(){
+    const n=Object.values(unreadByKey).reduce((a,b)=>a+b,0);
+    const b=$('#chatUnread');b.textContent=n>99?'99+':n;b.classList.toggle('hidden',!n);
+  }
+  function switchChat(key){
+    if(!key||key===chatKey)return;
+    sendTyping(false);chatKey=key;unreadByKey[key]=0;lastUnreadKey=null;
+    updateChatUnread();renderChat();
+  }
   function appendChat(key,msg){
     if(!key)return;
     const c=chatFor(key,msg.name,msg.avatar);
@@ -919,30 +958,34 @@
     c.messages.push({id:msg.id||uid(6),text:msg.text,ts:msg.ts||Date.now(),dir:msg.dir||'in',name:msg.name||'',avatar:msg.avatar||'',room:!!msg.room});
     if(c.messages.length>200)c.messages.splice(0,c.messages.length-200);
     saveChats();
-    if(!$('#chatPanel').classList.contains('hidden')&&key===chatKey)renderChat();
-    else{chatUnread++;lastUnreadKey=key;updateChatUnread();}
+    if(!$('#chatPanel').classList.contains('hidden')&&key===chatKey)renderChat(true);
+    else{unreadByKey[key]=(unreadByKey[key]||0)+1;lastUnreadKey=key;updateChatUnread();}
     renderQuickChat();
   }
   function openChat(target){
     const panel=$('#chatPanel');if(!panel)return;
+    chatReturnFocus=document.activeElement;
     if(target){if(typeof target==='string')chatKey=target;else chatKey=peerKey(target);}
     if(!chatKey){
       const t=chatTargets();
       chatKey=(lastUnreadKey&&t.some(x=>x.key===lastUnreadKey))?lastUnreadKey:(t.length?t[0].key:null);
     }
-    lastUnreadKey=null;chatUnread=0;updateChatUnread();
+    lastUnreadKey=null;unreadByKey[chatKey]=0;updateChatUnread();
     $('#chatBackdrop').classList.remove('hidden');panel.classList.remove('hidden');
     renderChat();setTimeout(()=>$('#chatInput').focus(),60);
   }
   function closeChat(){
     $('#chatPanel').classList.add('hidden');$('#chatBackdrop').classList.add('hidden');
     sendTyping(false);
+    try{chatReturnFocus?.focus?.();}catch{}
   }
   $('#btnText').onclick=()=>openChat();
   $('#btnSendText2').onclick=()=>{const l=activePeers();if(!l.length)return toast('No devices nearby','err');openChat((targetPeer&&!peerBlocked(targetPeer))?targetPeer:l[0]);};
   $('#btnCloseChat').onclick=closeChat;
   $('#chatBackdrop').onclick=closeChat;
-  $('#chatTarget').onchange=e=>{chatKey=e.target.value;renderChat();};
+  $('#chatConversations').addEventListener('click',e=>{
+    const chip=e.target.closest('.chat-chip');if(chip)switchChat(chip.dataset.key);
+  });
   $('#btnChatClear').onclick=()=>{
     if(!chatKey||!chats[chatKey]||!chats[chatKey].messages.length)return;
     if(!confirm('Clear this conversation?'))return;
@@ -965,6 +1008,7 @@
   }
   $('#chatInput').addEventListener('input',()=>{
     growChatInput();$('#chatCount').textContent=`${$('#chatInput').value.length}/8192`;
+    if(chatKey){chatDrafts[chatKey]=$('#chatInput').value;saveDrafts();}
     const now=Date.now();
     if($('#chatInput').value.trim()&&now-typingSent>1500){typingSent=now;sendTyping(true);}
   });
@@ -988,7 +1032,9 @@
     if(!sel||!preview)return;
     const targets=chatTargets(),prev=sel.value;
     sel.innerHTML=targets.map(t=>`<option value="${escapeHtml(t.key)}">${escapeHtml(t.label)}</option>`).join('')||'<option value="">No devices</option>';
-    if(targets.some(t=>t.key===prev))sel.value=prev;
+    const prefer=prev||lastUnreadKey||chatKey||Object.keys(chats).find(k=>chats[k]&&chats[k].messages.length)||'';
+    if(prefer&&targets.some(t=>t.key===prefer))sel.value=prefer;
+    else if(targets.length)sel.value=targets[0].key;
     const key=sel.value||chatKey;
     const c=key&&chats[key]&&chats[key].messages.length?chats[key].messages[chats[key].messages.length-1]:null;
     preview.innerHTML=c?`<strong>${c.dir==='out'?'You':escapeHtml(c.name||chatTitle(key))}:</strong> ${escapeHtml(c.text).slice(0,160)}`:'<span class="muted">No messages yet — say hello 👋</span>';
@@ -998,29 +1044,29 @@
     e.preventDefault();
     const input=$('#chatInput'),text=input.value.trim();
     if(!text)return;
-    input.value='';growChatInput();sendTyping(false);
+    input.value='';if(chatKey){chatDrafts[chatKey]='';saveDrafts();}
+    growChatInput();sendTyping(false);
     if(!chatKey){toast('No conversation selected','err');return;}
     await dispatchText(chatKey,text);
+    setTimeout(()=>input.focus(),40);
   };
   $('#chatQuickForm').onsubmit=async(e)=>{
     e.preventDefault();
     const input=$('#chatQuickInput'),text=input.value.trim();
     if(!text)return;
-    if(await dispatchText($('#chatQuickTarget').value,text)){input.value='';renderQuickChat();}
+    if(await dispatchText($('#chatQuickTarget').value,text)){input.value='';renderQuickChat();input.focus();}
   };
-  function quickIntent(){
-    const key=$('#chatQuickTarget').value;
+  function intentFor(key){
     if(key&&key.startsWith('r:'))return{kind:'room',room:key.slice(2)};
     const p=activePeers().find(x=>peerKey(x)===key);
     if(p){targetPeer=p;return{kind:'peer',peer:p};}
     return destinationIntent();
   }
-  $('#btnChatQuickFile').onclick=()=>{
-    const it=quickIntent();
-    if(it.kind==='room')sendIntentGlobal=it;
-    fileInput.click();
-  };
-  $('#btnChatQuickFolder').onclick=()=>{queueFolder(quickIntent());};
+  function sendFileWithIntent(it){if(it.kind==='room')sendIntentGlobal=it;fileInput.click();}
+  $('#btnChatQuickFile').onclick=()=>sendFileWithIntent(intentFor($('#chatQuickTarget').value));
+  $('#btnChatQuickFolder').onclick=()=>queueFolder(intentFor($('#chatQuickTarget').value));
+  $('#btnChatAttachFile').onclick=()=>sendFileWithIntent(intentFor(chatKey));
+  $('#btnChatAttachFolder').onclick=()=>queueFolder(intentFor(chatKey));
 
   // ---------- WebRTC (P2P strongly preferred; WS relay is last fallback) ----------
   function rtcConfig(){return{iceServers,sdpSemantics:'unified-plan'};}
@@ -1302,8 +1348,8 @@
         if(p){
           const k=peerKey(p);typingUntil[k]=data.typing?Date.now()+2500:0;
           clearTimeout(typingTimer);
-          typingTimer=setTimeout(()=>{if(!$('#chatPanel').classList.contains('hidden'))renderChat();},2600);
-          if(!$('#chatPanel').classList.contains('hidden'))renderChat();
+          typingTimer=setTimeout(()=>{if(!$('#chatPanel').classList.contains('hidden'))renderChat(false);},2600);
+          if(!$('#chatPanel').classList.contains('hidden'))renderChat(false);
         }
         return;
       }
@@ -1726,7 +1772,7 @@
   function releaseWakeLock(){try{wakeLock?.release?.()}catch{}wakeLock=null;}
 
   // ---------- pwa ----------
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=19').catch(()=>{});});}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js?v=20').catch(()=>{});});}
 
   // ---------- boot ----------
   // Room priority: ?room= URL > saved room > none. Saved room makes

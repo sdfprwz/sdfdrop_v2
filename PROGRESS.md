@@ -23,7 +23,8 @@ This file is the hand-over record for all work done on the project. It is safe t
 | 2026-11-18 | This progress report + local credential backup | done, pushed `0e3b043` |
 | 2026-11-18 | Duplicate radar entries fix (multiple tabs/devices showing several times) | done, pushed `eb1f188` |
 | 2026-11-18 | Professional Messages/chat panel (history, bubbles, unread, typing, room) | done, pushed `33dc4da` |
-| 2026-11-18 | Sidebar inline Chat card replaces "How it works"; quick message + file/folder | done, final commit |
+| 2026-11-18 | Sidebar inline Chat card replaces "How it works"; quick message + file/folder | done, pushed `3209604` |
+| 2026-11-18 | Chat UX polish: chips, drafts, date separators, smart scroll, in-chat attachments | done, final commit |
 
 All feature development happened on 2026-11-18 in this working directory.
 
@@ -87,10 +88,10 @@ All feature development happened on 2026-11-18 in this working directory.
 - On phones, scripted blob downloads are skipped; receiver taps ⬇ **Save file**.
 
 ### 2.9 Service worker / cache strategy — `public/sw.js`
-- Cache name bumped repeatedly (`v8` → `v19`) as changes shipped.
+- Cache name bumped repeatedly (`v8` → `v20`) as changes shipped.
 - JS/CSS/manifest are now **network-first** so updates apply without a hard refresh; other assets remain cache-first.
 - Added `landing-motion.js` to precache assets.
-- Asset URLs in `index.html` and the SW registration use `?v=19` query strings for hard cache busting.
+- Asset URLs in `index.html` and the SW registration use `?v=20` query strings for hard cache busting.
 - A stale service worker was the root cause of "preview never appears" reports — fixed permanently.
 
 ### 2.10 Deployment — GitHub + Render
@@ -104,6 +105,12 @@ All feature development happened on 2026-11-18 in this working directory.
 - **Server:** `visiblePeersFor()` now skips closing sockets, skips peers with the same `clientId` as the viewer (other tabs of the same browser), and de-duplicates by the signed `deviceId` token as a defensive measure.
 - **Client:** `activePeers()` de-duplicates by `deviceId` too, so every call site (radar, counts, sends, text targets, connection warm-up) sees one entry per device.
 - **Verified:** with an isolated server, 3 tabs in browser profile A + 1 tab in profile B → A sees exactly 1 peer and B sees exactly 1 peer.
+
+### 2.15 Chat UX polish — `public/app.js`, `public/index.html`, `public/styles.css`
+- Conversation switching now uses horizontally scrollable avatar chips with unread dots (replaces the panel `<select>`); the sidebar quick selector remains.
+- Added per-conversation drafts (localStorage `sdfdrop-chat-drafts`), date separators ("Today"/"Yesterday"/date), grouping of consecutive messages, tap-to-copy titles, smart auto-scroll (only jumps to bottom if already near it), Esc-to-close with focus restore, and 📎/🗂️ attachments inside the composer.
+- Typing-indicator re-renders no longer yank the scroll position or clobber the draft.
+- Verified in two Chrome profiles: unread badge, chips, message, date separator, attach buttons, Esc close, and draft restore all worked with no JS exceptions.
 
 ### 2.14 Sidebar Chat card — `public/index.html`, `public/app.js`, `public/styles.css`
 - Removed the static "How it works" sidebar card (the same guidance remains in the ❓ Help modal) and replaced it with a **💬 Chat** card directly under Transfers.
@@ -174,6 +181,7 @@ All feature development happened on 2026-11-18 in this working directory.
 ## 6. Git history (this work)
 
 ```
+c26f72a 2026-11-18  Polish chat UX with chips, drafts, dates, and attachments
 e555c51 2026-11-18  Replace How it works card with inline chat card
 0e334c9 2026-11-18  Add professional messages chat panel with history and typing
 7acd9cf 2026-11-18  Deduplicate radar peers by stable device identity
