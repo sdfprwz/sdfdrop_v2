@@ -21,7 +21,8 @@ This file is the hand-over record for all work done on the project. It is safe t
 | 2026-11-18 | TWA/APK documentation + Digital Asset Links route | done, pushed `135a253` |
 | 2026-11-18 | Signed release APK + AAB built; install notes | done, pushed `01067a0` |
 | 2026-11-18 | This progress report + local credential backup | done, pushed `0e3b043` |
-| 2026-11-18 | Duplicate radar entries fix (multiple tabs/devices showing several times) | done, pushed in final commit |
+| 2026-11-18 | Duplicate radar entries fix (multiple tabs/devices showing several times) | done, pushed `eb1f188` |
+| 2026-11-18 | Professional Messages/chat panel (history, bubbles, unread, typing, room) | done, final commit |
 
 All feature development happened on 2026-11-18 in this working directory.
 
@@ -103,6 +104,12 @@ All feature development happened on 2026-11-18 in this working directory.
 - **Client:** `activePeers()` de-duplicates by `deviceId` too, so every call site (radar, counts, sends, text targets, connection warm-up) sees one entry per device.
 - **Verified:** with an isolated server, 3 tabs in browser profile A + 1 tab in profile B → A sees exactly 1 peer and B sees exactly 1 peer.
 
+### 2.13 Professional Messages panel — `public/app.js`, `public/index.html`, `public/styles.css`
+- Replaced the plain "Send text" modal with a slide-in **Messages** panel: conversation selector, message bubbles with timestamps, online/offline status, tap-to-copy, character counter, and Clear.
+- Per-device and per-room conversations saved in `localStorage['sdfdrop-chats']` (200 messages each); unread badge on the ✉️ button; live typing indicator sent via the existing signal channel (throttled, no new server endpoint).
+- Enter sends / Shift+Enter newline; room conversations get a 📢 Room button in the composer. Texts no longer create duplicate Transfers entries.
+- Verified in two real Chrome profiles: A sent "Hello from A" → B showed it + unread badge; B replied → A's thread showed both; A's typing appeared as "… is typing…" on B; history persisted in localStorage; no JS exceptions.
+
 ### 2.12 Android APK (Trusted Web Activity)
 - Built with Bubblewrap CLI 1.27.0 + JDK 17 + Android SDK (platform 35/36, build-tools 35), using the generated Gradle project at `C:\Users\sdfpe\AppData\Local\Temp\opencode\twaproject`.
 - Package `com.sdfprwz.sdfdrop`, version `1.0.0` (code 1), minSdk 24, targetSdk 36, label **SdfDrop**, launch URL `https://sdfdrop2.onrender.com/`.
@@ -160,6 +167,7 @@ All feature development happened on 2026-11-18 in this working directory.
 ## 6. Git history (this work)
 
 ```
+0e334c9 2026-11-18  Add professional messages chat panel with history and typing
 7acd9cf 2026-11-18  Deduplicate radar peers by stable device identity
 01067a0 2026-11-18  Add APK build artifacts and install notes
 135a253 2026-11-18  Document TWA APK signing and asset-links configuration

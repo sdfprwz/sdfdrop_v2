@@ -32,7 +32,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
 <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
-<link rel="stylesheet" href="styles.css?v=16" />
+<link rel="stylesheet" href="styles.css?v=18" />
 <script type="application/ld+json" id="appLd">
 {"@context":"https://schema.org","@type":"WebApplication","name":"SdfDrop","url":"/","applicationCategory":"UtilitiesApplication","operatingSystem":"Any (Web browser)","offers":{"@type":"Offer","price":"0"},"description":"Fast, private peer-to-peer file sharing between devices. Same-WiFi auto-discovery and room codes for any network. No signup, no storage."}
 </script>
@@ -135,7 +135,7 @@
     <button id="btnRoom" class="btn ghost" title="Join / create internet room">🔗 <span class="hide-sm">Room</span></button>
     <button id="btnQr" class="btn ghost" title="Show QR to connect">📷 <span class="hide-sm">QR</span></button>
     <button id="btnHelp" class="btn ghost" title="How to connect / troubleshoot" aria-label="Help">❓</button>
-    <button id="btnText" class="btn ghost" title="Send text" aria-label="Send text">✉️</button>
+    <button id="btnText" class="btn ghost" title="Messages" aria-label="Messages">✉️<span id="chatUnread" class="chat-unread hidden">0</span></button>
     <button id="btnDevices" class="btn ghost" title="Trusted devices — auto-accept, block, remove" aria-label="Device settings">🔐 <span class="hide-sm">Devices</span></button>
     <button id="btnTheme" class="btn ghost" title="Toggle theme" aria-label="Toggle theme">🌙</button>
   </div>
@@ -276,18 +276,27 @@
   </div>
 </div>
 
-<!-- Text modal -->
-<div id="textModal" class="modal hidden" role="dialog" aria-modal="true">
-  <div class="modal-card">
-    <h3>✉️ Send text</h3>
-    <p class="muted" id="textTargetLabel"></p>
-    <textarea id="textInput" rows="4" placeholder="Type message or paste a link…"></textarea>
-    <div class="modal-actions">
-      <button id="btnCloseText" class="btn ghost">Cancel</button>
-      <button id="btnDoSendRoomText" class="btn" title="Announce to everyone in the room">📢 Room</button>
-      <button id="btnDoSendText" class="btn primary">Send ✓</button>
-    </div>
+<!-- Messages -->
+<div id="chatBackdrop" class="chat-backdrop hidden"></div>
+<div id="chatPanel" class="chat-panel hidden" role="dialog" aria-modal="true" aria-label="Messages">
+  <div class="chat-head">
+    <div><h3>💬 Messages</h3><span id="chatStatus" class="muted small"></span></div>
+    <button id="btnCloseChat" class="icon-btn" title="Close messages" aria-label="Close messages">✕</button>
   </div>
+  <div class="chat-toolbar">
+    <select id="chatTarget" aria-label="Conversation"></select>
+    <button id="btnChatClear" class="btn small ghost" title="Clear this conversation">Clear</button>
+  </div>
+  <div id="chatLog" class="chat-log" role="log" aria-live="polite"></div>
+  <div id="chatTyping" class="chat-typing hidden"></div>
+  <form id="chatForm" class="chat-compose">
+    <textarea id="chatInput" rows="1" maxlength="8192" placeholder="Write a message… (Enter to send)" aria-label="Message"></textarea>
+    <div class="chat-compose-actions">
+      <span id="chatCount" class="muted tiny"></span>
+      <button id="btnChatRoom" class="btn small hidden" type="button" title="Announce to the room">📢 Room</button>
+      <button id="btnChatSend" class="btn small primary" type="submit">Send ➤</button>
+    </div>
+  </form>
 </div>
 
 <!-- Pre-send preview + confirm -->
@@ -334,7 +343,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="vendor/qrcode.min.js" defer></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=18"></script>
 <script src="landing-motion.js?v=1"></script>
 <script src="landing.js"></script>
 </body>

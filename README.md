@@ -8,7 +8,8 @@ Fast browser-to-browser file + text sharing. Same-WiFi discovery, room codes for
 - **Private:** WebRTC P2P first (DTLS encrypted), direct LAN/host path preferred. TURN, then WebSocket relay as last fallback for 1-to-1 transfers. Server only signals — files are never stored. No database, no accounts.
 - **Trusted devices:** mark your own devices once → future transfers auto-accept with no tap. Block or remove any device from the 🔐 Devices panel (list stored locally).
 - **Preview & confirm:** picking a file opens a **preview + Send/Cancel** dialog first (images, video, audio, PDF, text) — nothing is transferred until you confirm. Completed transfers also keep a 👁 Preview button.
-- **Folders:** 🗂️ **Send folder** uses the browser's real directory picker (or a multi-file + folder-name fallback on mobile), packs a streaming ZIP on the fly, then asks you to confirm before sending. Drag & drop of a folder works too.
+- **Folders:** 🗂️ **Send folder** uses the browser's real directory picker (or a multi-file + folder-name fallback on mobile), packs a ZIP on the fly, then asks you to confirm before sending. Drag & drop of a folder works too.
+- **Messages:** a proper 💬 chat panel with per-device conversations, saved history, unread badge, typing indicator, and room announcements — no more plain text box.
 - **Fast:** 64KB DataChannel chunks with proper backpressure, larger relay chunks, streaming receive (no base64 concat), progress + speed, screen WakeLock for big transfers.
 - **PWA:** installable, dark/light themes, responsive phone → desktop UI.
 
@@ -98,6 +99,16 @@ Device A  ←WebSocket→  sdfdrop server (Render / localhost)  ←WebSocket→ 
 - On phones, scripted blob downloads are blocked by the browser, so the receiver must tap **⬇ Save file**; desktop still auto-downloads.
 - Limit: 4 GB per folder (ZIP32 format). For bigger data, send files individually over same-WiFi P2P.
 - Code assets (`app.js`, `styles.css`) are now network-first in the service worker, so updates apply without a hard refresh.
+
+## Messages
+
+- ✉️ opens a **Messages** panel with one conversation per device (plus the current room). The conversation selector lists nearby devices, the active room, and saved conversations.
+- Messages appear as bubbles with timestamps; outgoing messages use the brand gradient. Tap a bubble to copy it. **Clear** wipes only the current conversation.
+- History is saved locally in `localStorage['sdfdrop-chats']` (200 messages per conversation) — no server storage.
+- An **unread badge** appears on ✉️ when a message arrives while the panel is closed.
+- A lightweight **typing indicator** is sent over the existing signaling channel (throttled, no new server endpoint).
+- **Enter** sends, **Shift+Enter** adds a line; the counter shows the 8 KB limit. Room conversations get a 📢 Room button in the composer.
+- Texts still travel P2P first with relay fallback; room announcements use the existing room broadcast. They no longer create duplicate entries in the Transfers list.
 
 ## Android APK (Trusted Web Activity)
 
